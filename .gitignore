@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.venv/
+
+# Node / Vite / React
+node_modules/
+dist/
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+.devin/
+.windsurf/
+
+# Generated data and caches (can be regenerated)
+sigungu_metal_imports.csv
+sigungu_metal_imports_top3.csv
+sigungu_metal_imports_progress.json
+data_cache.json
+dart_company_map.json
+collector_run.log
+server.log
+metals.json
+metal_regions.json

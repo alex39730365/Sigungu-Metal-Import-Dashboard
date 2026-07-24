@@ -1,0 +1,453 @@
+# -*- coding: utf-8 -*-
+"""
+FastAPI 백엔드: 시군구별 금속 수입 데이터 API (관세청 API 직접 호출 + JSON 파일 캐싱)
+
+서버 시작 시 `data_cache.json` 파일이 있으면 즉시 로드하고, 없을 경우에만
+백그라운드에서 관세청 시군구별 품목별 수출입실적 API를 호출한다.
+/api/refresh 호출 시 API를 재호출하여 캐시 파일을 갱신한다.
+
+엔드포인트
+----------
+GET  /api/health
+GET  /api/status
+    - 데이터 캐시 상태(수집 진행 여부, 마지막 갱신 시각, 행 수)
+POST /api/refresh
+    - 관세청 API를 다시 호출해 캐시를 갱신한다 (백그라운드 실행, 즉시 응답)
+GET  /api/regions
+    - 시군구별 총 수입금액(USD)/수입건수 요약 목록 (지도/바 차트용)
+GET  /api/regions/{region_name}/breakdown
+    - 특정 시군구의 금속별 수입 비율 (클릭 시 상세 패널용)
+GET  /api/regions/{region_name}/timeseries
+    - 특정 시군구의 연월별 수입금액 추이
+
+실행
+----
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import threading
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+# 프로젝트 루트의 sigungu_metal_import_collector.py 를 import 하기 위한 경로 추가
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
+import sigungu_metal_import_collector as collector  # noqa: E402
+
+# ------------------------------------------------------------------------------
+# 설정
+# ------------------------------------------------------------------------------
+
+DEFAULT_STRT_YYMM = os.environ.get("METAL_STRT_YYMM", "202401")
+DEFAULT_END_YYMM = os.environ.get("METAL_END_YYMM", "202412")
+CACHE_FILE = Path(__file__).resolve().parents[2] / "data_cache.json"
+
+app = FastAPI(title="시군구별 금속 수입 대시보드 API", version="2.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 운영 환경에서는 프론트엔드 도메인으로 제한 권장
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 시군구명 -> 대표 좌표 (경도, 위도). 프론트엔드 버블맵에서 사용.
+# 정확한 매칭이 없으면 시도명으로 SIDO_CENTER_COORDINATES 를 fallback으로 사용한다.
+REGION_COORDINATES = {
+    "경상북도 포항시": {"lat": 36.0190, "lon": 129.3435},
+    "울산광역시 남구": {"lat": 35.5372, "lon": 129.3300},
+    "충청남도 당진시": {"lat": 36.8930, "lon": 126.6280},
+    "전라남도 광양시": {"lat": 34.9407, "lon": 127.6959},
+    "전라남도 여수시": {"lat": 34.7604, "lon": 127.6622},
+}
+
+SIDO_CENTER_COORDINATES = {
+    "서울특별시": {"lat": 37.5665, "lon": 126.9780},
+    "부산광역시": {"lat": 35.1796, "lon": 129.0756},
+    "대구광역시": {"lat": 35.8714, "lon": 128.6014},
+    "인천광역시": {"lat": 37.4563, "lon": 126.7052},
+    "광주광역시": {"lat": 35.1595, "lon": 126.8526},
+    "대전광역시": {"lat": 36.3504, "lon": 127.3845},
+    "울산광역시": {"lat": 35.5384, "lon": 129.3114},
+    "세종특별자치시": {"lat": 36.4801, "lon": 127.2891},
+    "경기도": {"lat": 37.4138, "lon": 127.5183},
+    "강원특별자치도": {"lat": 37.8228, "lon": 128.1555},
+    "충청북도": {"lat": 36.8000, "lon": 127.7000},
+    "충청남도": {"lat": 36.5184, "lon": 126.8000},
+    "전북특별자치도": {"lat": 35.7175, "lon": 127.1530},
+    "전라남도": {"lat": 34.8161, "lon": 126.4630},
+    "경상북도": {"lat": 36.4919, "lon": 128.8889},
+    "경상남도": {"lat": 35.4606, "lon": 128.2132},
+    "제주특별자치도": {"lat": 33.4996, "lon": 126.5312},
+}
+
+
+def resolve_coordinates(region_nm: str) -> dict:
+    if region_nm in REGION_COORDINATES:
+        return REGION_COORDINATES[region_nm]
+    for sido_nm, coord in SIDO_CENTER_COORDINATES.items():
+        if region_nm.startswith(sido_nm):
+            return coord
+    return {}
+
+
+# ------------------------------------------------------------------------------
+# 관세청 API 실시간 수집 및 인메모리 캐싱
+# ------------------------------------------------------------------------------
+
+class DataCache:
+    def __init__(self) -> None:
+        self.df: pd.DataFrame = pd.DataFrame()
+        self.is_refreshing: bool = False
+        self.last_updated: Optional[datetime] = None
+        self.last_error: Optional[str] = None
+        self.loaded_from_cache: bool = False
+        self._lock = threading.Lock()
+        self._load_cache()
+
+    def _load_cache(self) -> None:
+        """로컬 JSON 캐시 파일이 있으면 메모리에 로드한다."""
+        if not CACHE_FILE.exists():
+            return
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            df = pd.DataFrame(payload["rows"])
+            if df.empty:
+                return
+            with self._lock:
+                self.df = df
+                self.last_updated = (
+                    datetime.fromisoformat(payload["last_updated"])
+                    if payload.get("last_updated")
+                    else datetime.fromtimestamp(CACHE_FILE.stat().st_mtime)
+                )
+                self.loaded_from_cache = True
+                self.last_error = None
+        except Exception as exc:  # noqa: BLE001
+            with self._lock:
+                self.last_error = f"캐시 파일 로드 실패: {exc}"
+
+    def _save_cache(self, df: pd.DataFrame, last_updated: datetime) -> None:
+        """데이터프레임을 로컬 JSON 파일로 저장한다."""
+        records = json.loads(
+            df.to_json(orient="records", force_ascii=False, date_format="iso")
+        )
+        payload = {"last_updated": last_updated.isoformat(), "rows": records}
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+
+    def start_refresh(self, strt_yymm: str, end_yymm: str) -> None:
+        with self._lock:
+            if self.is_refreshing:
+                return
+            self.is_refreshing = True
+            self.last_error = None
+
+        thread = threading.Thread(
+            target=self._run_refresh, args=(strt_yymm, end_yymm), daemon=True
+        )
+        thread.start()
+
+    def _run_refresh(self, strt_yymm: str, end_yymm: str) -> None:
+        try:
+            df = collector.collect_all_import_data(
+                strt_yymm=strt_yymm,
+                end_yymm=end_yymm,
+                hs6_codes=collector.TARGET_HS6_CODES,
+                sido_map=collector.TARGET_SIDO_MAP,
+                sigungu_keywords=collector.TARGET_SIGUNGU_KEYWORDS,
+            )
+            if df is None or df.empty:
+                raise ValueError("수집된 데이터가 없습니다.")
+            now = datetime.now()
+            with self._lock:
+                self.df = df
+                self.last_updated = now
+                self.loaded_from_cache = False
+            self._save_cache(df, now)
+        except Exception as exc:  # noqa: BLE001
+            with self._lock:
+                self.last_error = str(exc)
+        finally:
+            with self._lock:
+                self.is_refreshing = False
+
+    def get_df(self) -> pd.DataFrame:
+        with self._lock:
+            return self.df.copy()
+
+
+cache = DataCache()
+
+# DART 기업 본사-시군구 매핑 (dart_company_collector.py 가 생성한 dart_company_map.json)
+REGION_COMPANIES: Dict[str, List[Dict[str, Any]]] = {}
+
+
+def load_region_companies() -> None:
+    global REGION_COMPANIES
+    map_path = Path(__file__).resolve().parent / "dart_company_map.json"
+    if map_path.exists():
+        with open(map_path, "r", encoding="utf-8") as f:
+            REGION_COMPANIES = json.load(f)
+
+
+# DART 기업 매핑 즉시 로드 (개발/테스트 및 uvicorn startup 모두에서 사용 가능)
+load_region_companies()
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    # DART 기업 매핑이 있으면 로드
+    load_region_companies()
+    # 캐시 파일이 있으면 로드하여 즉시 서비스하고, 없을 때만 API 수집을 시작한다.
+    if cache.df.empty:
+        cache.start_refresh(DEFAULT_STRT_YYMM, DEFAULT_END_YYMM)
+
+
+# ------------------------------------------------------------------------------
+# 응답 스키마
+# ------------------------------------------------------------------------------
+
+class RegionSummary(BaseModel):
+    region_nm: str
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    total_import_usd: float
+    total_import_cnt: int
+
+
+class MetalBreakdownItem(BaseModel):
+    metal_category: str
+    import_usd: float
+    import_cnt: int
+    ratio_pct: float
+
+
+class TimeseriesPoint(BaseModel):
+    year_month: str
+    import_usd: float
+    import_cnt: int
+
+
+class MetalSummary(BaseModel):
+    metal_category: str
+    total_import_usd: float
+    total_import_cnt: int
+
+
+class MetalRegionItem(BaseModel):
+    region_nm: str
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    import_usd: float
+    import_cnt: int
+    ratio_pct: float
+
+
+class RegionCompany(BaseModel):
+    corp_code: str
+    corp_name: str
+    stock_code: str = ""
+    adres: str
+    induty_code: str = ""
+
+
+# ------------------------------------------------------------------------------
+# 엔드포인트
+# ------------------------------------------------------------------------------
+
+@app.get("/api/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
+@app.get("/api/status")
+def get_status() -> dict:
+    return {
+        "is_refreshing": cache.is_refreshing,
+        "last_updated": cache.last_updated.isoformat() if cache.last_updated else None,
+        "last_error": cache.last_error,
+        "row_count": len(cache.df),
+        "loaded_from_cache": cache.loaded_from_cache,
+        "cache_file_exists": CACHE_FILE.exists(),
+        "cache_file_path": str(CACHE_FILE),
+    }
+
+
+@app.post("/api/refresh")
+def refresh(strt_yymm: str = DEFAULT_STRT_YYMM, end_yymm: str = DEFAULT_END_YYMM) -> dict:
+    """관세청 API를 다시 호출해 백그라운드에서 캐시를 갱신한다 (즉시 반환)."""
+    if cache.is_refreshing:
+        return {"status": "already_refreshing"}
+    cache.start_refresh(strt_yymm, end_yymm)
+    return {"status": "started", "strt_yymm": strt_yymm, "end_yymm": end_yymm}
+
+
+def _get_df_or_503() -> pd.DataFrame:
+    df = cache.get_df()
+    if df.empty:
+        if cache.is_refreshing:
+            raise HTTPException(status_code=425, detail="데이터 수집이 진행 중입니다. 잠시 후 다시 시도하세요.")
+        if cache.last_error:
+            raise HTTPException(status_code=502, detail=f"데이터 수집 실패: {cache.last_error}")
+        raise HTTPException(status_code=404, detail="수집된 데이터가 없습니다. POST /api/refresh 를 호출하세요.")
+    return df
+
+
+@app.get("/api/region-companies", response_model=Dict[str, List[RegionCompany]])
+def get_region_companies(region_name: str) -> Dict[str, List[RegionCompany]]:
+    """선택한 시군구에 본사/등록 사업장을 둔 DART 기업 목록 반환."""
+    load_region_companies()  # dart_company_map.json 변경 시 재시작 없이 반영
+    companies = REGION_COMPANIES.get(region_name, [])
+    return {"companies": companies}
+
+
+@app.get("/api/regions", response_model=List[RegionSummary])
+def get_regions() -> List[RegionSummary]:
+    df = _get_df_or_503()
+
+    grouped = (
+        df.groupby("시군구명", as_index=False)
+        .agg(total_import_usd=("수입금액(USD)", "sum"), total_import_cnt=("수입건수", "sum"))
+        .sort_values("total_import_usd", ascending=False)
+    )
+
+    results: List[RegionSummary] = []
+    for _, row in grouped.iterrows():
+        coord = resolve_coordinates(row["시군구명"])
+        results.append(
+            RegionSummary(
+                region_nm=row["시군구명"],
+                lat=coord.get("lat"),
+                lon=coord.get("lon"),
+                total_import_usd=float(row["total_import_usd"]),
+                total_import_cnt=int(row["total_import_cnt"]),
+            )
+        )
+    return results
+
+
+@app.get("/api/regions/{region_name}/breakdown", response_model=List[MetalBreakdownItem])
+def get_region_breakdown(region_name: str) -> List[MetalBreakdownItem]:
+    df = _get_df_or_503()
+
+    region_df = df[df["시군구명"] == region_name]
+    if region_df.empty:
+        raise HTTPException(status_code=404, detail=f"'{region_name}' 데이터가 없습니다.")
+
+    grouped = (
+        region_df.groupby("금속구분", as_index=False)
+        .agg(import_usd=("수입금액(USD)", "sum"), import_cnt=("수입건수", "sum"))
+        .sort_values("import_usd", ascending=False)
+    )
+
+    total = grouped["import_usd"].sum()
+    results: List[MetalBreakdownItem] = []
+    for _, row in grouped.iterrows():
+        ratio = (row["import_usd"] / total * 100) if total > 0 else 0.0
+        results.append(
+            MetalBreakdownItem(
+                metal_category=row["금속구분"],
+                import_usd=float(row["import_usd"]),
+                import_cnt=int(row["import_cnt"]),
+                ratio_pct=round(float(ratio), 2),
+            )
+        )
+    return results
+
+
+@app.get("/api/regions/{region_name}/timeseries", response_model=List[TimeseriesPoint])
+def get_region_timeseries(region_name: str) -> List[TimeseriesPoint]:
+    df = _get_df_or_503()
+
+    region_df = df[df["시군구명"] == region_name]
+    if region_df.empty:
+        raise HTTPException(status_code=404, detail=f"'{region_name}' 데이터가 없습니다.")
+
+    grouped = (
+        region_df.groupby("연월", as_index=False)
+        .agg(import_usd=("수입금액(USD)", "sum"), import_cnt=("수입건수", "sum"))
+        .sort_values("연월")
+    )
+
+    return [
+        TimeseriesPoint(
+            year_month=row["연월"],
+            import_usd=float(row["import_usd"]),
+            import_cnt=int(row["import_cnt"]),
+        )
+        for _, row in grouped.iterrows()
+    ]
+
+
+@app.get("/api/metals", response_model=List[MetalSummary])
+def get_metals() -> List[MetalSummary]:
+    """전체 금속(금속구분)별 총 수입금액/건수를 반환한다."""
+    df = _get_df_or_503()
+
+    grouped = (
+        df.groupby("금속구분", as_index=False)
+        .agg(total_import_usd=("수입금액(USD)", "sum"), total_import_cnt=("수입건수", "sum"))
+        .sort_values("total_import_usd", ascending=False)
+    )
+
+    return [
+        MetalSummary(
+            metal_category=row["금속구분"],
+            total_import_usd=float(row["total_import_usd"]),
+            total_import_cnt=int(row["total_import_cnt"]),
+        )
+        for _, row in grouped.iterrows()
+    ]
+
+
+@app.get("/api/metals/{metal_category}/regions", response_model=List[MetalRegionItem])
+def get_metal_regions(metal_category: str, limit: int = 20) -> List[MetalRegionItem]:
+    """특정 금속을 가장 많이 수입하는 시군구 순위를 반환한다."""
+    df = _get_df_or_503()
+
+    metal_df = df[df["금속구분"] == metal_category]
+    if metal_df.empty:
+        raise HTTPException(status_code=404, detail=f"'{metal_category}' 데이터가 없습니다.")
+
+    grouped = (
+        metal_df.groupby("시군구명", as_index=False)
+        .agg(import_usd=("수입금액(USD)", "sum"), import_cnt=("수입건수", "sum"))
+        .sort_values("import_usd", ascending=False)
+    )
+
+    total = float(grouped["import_usd"].sum())
+    results: List[MetalRegionItem] = []
+    for _, row in grouped.head(limit).iterrows():
+        coord = resolve_coordinates(row["시군구명"])
+        ratio = (row["import_usd"] / total * 100) if total > 0 else 0.0
+        results.append(
+            MetalRegionItem(
+                region_nm=row["시군구명"],
+                lat=coord.get("lat"),
+                lon=coord.get("lon"),
+                import_usd=float(row["import_usd"]),
+                import_cnt=int(row["import_cnt"]),
+                ratio_pct=round(float(ratio), 2),
+            )
+        )
+    return results
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
