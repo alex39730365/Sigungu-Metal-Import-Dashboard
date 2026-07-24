@@ -32,7 +32,8 @@ import json
 import os
 import sys
 import threading
-from datetime import datetime
+import time
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -53,6 +54,10 @@ import sigungu_metal_import_collector as collector  # noqa: E402
 DEFAULT_STRT_YYMM = os.environ.get("METAL_STRT_YYMM", "202401")
 DEFAULT_END_YYMM = os.environ.get("METAL_END_YYMM", "202412")
 CACHE_FILE = Path(__file__).resolve().parents[2] / "data_cache.json"
+LAST_AUTO_UPDATE_FILE = Path(__file__).resolve().parents[2] / ".last_auto_update"
+AUTO_UPDATE_DAY_START = int(os.environ.get("METAL_AUTO_UPDATE_DAY_START", "15"))
+AUTO_UPDATE_DAY_END = int(os.environ.get("METAL_AUTO_UPDATE_DAY_END", "20"))
+AUTO_UPDATE_HOUR = int(os.environ.get("METAL_AUTO_UPDATE_HOUR", "9"))
 
 app = FastAPI(title="시군구별 금속 수입 대시보드 API", version="2.0.0")
 
@@ -208,6 +213,70 @@ def load_region_companies() -> None:
 load_region_companies()
 
 
+def _previous_month_yymm(today: date) -> str:
+    """이전 달을 'YYYYMM' 형식으로 반환한다."""
+    first_of_month = today.replace(day=1)
+    last_month = first_of_month - timedelta(days=1)
+    return last_month.strftime("%Y%m")
+
+
+def _seconds_until_next_0900() -> float:
+    """다음 오전 9시까지 남은 초를 반환한다."""
+    now = datetime.now()
+    next_0900 = now.replace(hour=AUTO_UPDATE_HOUR, minute=0, second=0, microsecond=0)
+    if next_0900 <= now:
+        next_0900 += timedelta(days=1)
+    return (next_0900 - now).total_seconds()
+
+
+def _mark_update_done(target_yymm: str) -> None:
+    """수집이 끝나고 성공하면 마지막 자동 업데이트 시점을 기록한다."""
+    start = time.time()
+    timeout = 7200  # 최대 2시간 대기
+    while cache.is_refreshing and time.time() - start < timeout:
+        time.sleep(5)
+
+    if not cache.is_refreshing and not cache.last_error:
+        try:
+            LAST_AUTO_UPDATE_FILE.write_text(target_yymm, encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _try_monthly_update() -> None:
+    """매월 15~20일 사이에 아직 업데이트하지 않았다면 전월 기준으로 데이터를 갱신한다."""
+    today = date.today()
+    if not (AUTO_UPDATE_DAY_START <= today.day <= AUTO_UPDATE_DAY_END):
+        return
+
+    target_yymm = _previous_month_yymm(today)
+    if LAST_AUTO_UPDATE_FILE.exists():
+        try:
+            last = LAST_AUTO_UPDATE_FILE.read_text(encoding="utf-8").strip()
+            if last == target_yymm:
+                return
+        except Exception:  # noqa: BLE001
+            pass
+
+    logger = collector.logger if hasattr(collector, "logger") else None
+    if logger:
+        logger.info(
+            "월간 자동 업데이트 시작: %s ~ %s", DEFAULT_STRT_YYMM, target_yymm
+        )
+    cache.start_refresh(DEFAULT_STRT_YYMM, target_yymm)
+    threading.Thread(
+        target=_mark_update_done, args=(target_yymm,), daemon=True
+    ).start()
+
+
+def _monthly_update_scheduler() -> None:
+    """매일 09:00에 한 번씩 월간 업데이트 가능 시점을 확인한다."""
+    _try_monthly_update()
+    while True:
+        time.sleep(_seconds_until_next_0900())
+        _try_monthly_update()
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     # DART 기업 매핑이 있으면 로드
@@ -215,6 +284,8 @@ def on_startup() -> None:
     # 캐시 파일이 있으면 로드하여 즉시 서비스하고, 없을 때만 API 수집을 시작한다.
     if cache.df.empty:
         cache.start_refresh(DEFAULT_STRT_YYMM, DEFAULT_END_YYMM)
+    # 월 1회(15~20일) 자동 업데이트 스케줄러 실행
+    threading.Thread(target=_monthly_update_scheduler, daemon=True).start()
 
 
 # ------------------------------------------------------------------------------

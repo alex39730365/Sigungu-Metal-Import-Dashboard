@@ -17,10 +17,6 @@ async function fetchStatus(): Promise<Status> {
   return res.json();
 }
 
-async function triggerRefresh(): Promise<void> {
-  await fetch(`${API_BASE_URL}/refresh`, { method: "POST" });
-}
-
 interface Props {
   onDataReady: () => void;
 }
@@ -79,13 +75,9 @@ export default function StatusBar({ onDataReady }: Props) {
           </>
         )}
       </div>
-      <button
-        onClick={() => triggerRefresh()}
-        disabled={status.is_refreshing}
-        className="px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-xs font-medium transition-colors"
-      >
-        새로고침
-      </button>
+      <span className="text-xs text-gray-400">
+        월 1회(15~20일) 자동 업데이트
+      </span>
     </div>
   );
 }
