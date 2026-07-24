@@ -9,14 +9,16 @@ interface Status {
   cache_file_exists?: boolean;
 }
 
+const API_BASE_URL = `${import.meta.env.VITE_API_BASE_URL ?? ""}/api`;
+
 async function fetchStatus(): Promise<Status> {
-  const res = await fetch("/api/status");
+  const res = await fetch(`${API_BASE_URL}/status`);
   if (!res.ok) throw new Error("status 조회 실패");
   return res.json();
 }
 
 async function triggerRefresh(): Promise<void> {
-  await fetch("/api/refresh", { method: "POST" });
+  await fetch(`${API_BASE_URL}/refresh`, { method: "POST" });
 }
 
 interface Props {
