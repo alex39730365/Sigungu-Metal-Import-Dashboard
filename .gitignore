@@ -21,7 +21,6 @@ npm-debug.log*
 sigungu_metal_imports.csv
 sigungu_metal_imports_top3.csv
 sigungu_metal_imports_progress.json
-data_cache.json
 dart_company_map.json
 collector_run.log
 server.log
