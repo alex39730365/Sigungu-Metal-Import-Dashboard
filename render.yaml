@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: sigungu-metal-dashboard-api
+    env: python
+    plan: free
+    rootDir: dashboard/backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: METAL_STRT_YYMM
+        value: "202401"
+      - key: METAL_END_YYMM
+        value: "202412"
