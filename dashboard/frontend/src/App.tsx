@@ -46,6 +46,9 @@ export default function App() {
         <p className="text-gray-500 text-sm mt-1">
           관세청 시군구별 품목별 수출입실적 API 기반 · 비귀금속(철강·비철금속·희유금속·리튬화합물)
         </p>
+        <p className="text-gray-400 text-xs mt-0.5">
+          공표주기 : 1개월 · 공표시기 : 매월 15일경 수출입 신고의 정정, 취하 등 변경내역을 반영하여 전월까지의 자료를 현행화
+        </p>
       </header>
 
       <StatusBar onDataReady={loadRegions} />
