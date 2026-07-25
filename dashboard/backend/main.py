@@ -294,10 +294,8 @@ def on_startup() -> None:
     # 캐시 파일이 있으면 로드하여 즉시 서비스하고, 없을 때만 API 수집을 시작한다.
     if cache.df.empty:
         cache.start_refresh(DEFAULT_STRT_YYMM, DEFAULT_END_YYMM)
-    # DART 금속 기업 인덱스를 백그라운드에서 구축/갱신
-    idx = _get_dart_index()
-    if idx:
-        idx.start_background_refresh()
+    # DART 금속 기업 인덱스는 사전 빌드된 JSON 파일에서 로드 (백그라운드 크롤링 금지)
+    _get_dart_index()
     # 월 1회(15~20일) 자동 업데이트 스케줄러 실행
     threading.Thread(target=_monthly_update_scheduler, daemon=True).start()
 
@@ -350,6 +348,12 @@ class RegionCompany(BaseModel):
     induty_code: str = ""
 
 
+class RegionCompaniesResponse(BaseModel):
+    companies: List[RegionCompany]
+    index_loaded: bool
+    message: str = ""
+
+
 # ------------------------------------------------------------------------------
 # 엔드포인트
 # ------------------------------------------------------------------------------
@@ -394,38 +398,48 @@ def _get_df_or_503() -> pd.DataFrame:
 
 @app.get("/api/dart-status")
 def dart_status() -> Dict[str, Any]:
-    """DART API 키 설정 및 인덱스 상태 확인."""
+    """DART API 키 설정 및 사전 빌드 인덱스 상태 확인."""
     idx = _get_dart_index()
+    ready = idx.is_ready() if idx else False
+    status = idx.status() if idx else None
     return {
         "dart_api_key_set": bool(os.environ.get("DART_API_KEY")),
-        "index_ready": idx.is_ready() if idx else False,
-        "index_status": idx.status() if idx else None,
-        "message": "DART_API_KEY가 설정되면 서버 구동 시 금속 기업 인덱스를 구축합니다.",
+        "index_ready": ready,
+        "index_status": status,
+        "message": (
+            "DART 인덱스가 로드되었습니다."
+            if ready
+            else "dart_metal_index.json 파일이 없거나 비어 있습니다. build_dart_metal_index.py 를 실행하여 파일을 생성해주세요."
+        ),
     }
 
 
-@app.get("/api/region-companies", response_model=Dict[str, List[RegionCompany]])
-def get_region_companies(region_name: str, keyword: str = "") -> Dict[str, List[RegionCompany]]:
+@app.get("/api/region-companies", response_model=RegionCompaniesResponse)
+def get_region_companies(region_name: str, keyword: str = "") -> RegionCompaniesResponse:
     """선택한 시군구에 본사/등록 사업장을 둔 DART 기업 목록 반환.
 
-    DART_API_KEY 가 설정되어 있으면 사전 구축된 금속 기업 인덱스에서 검색하고,
-    그렇지 않으면 dart_company_map.json 캐시를 사용합니다.
+    사전 빌드된 dart_metal_index.json 파일이 있으면 이를 사용하고,
+    없으면 상태 메시지와 함께 빈 목록을 반환합니다.
     """
     idx = _get_dart_index()
-    if idx:
-        if not idx.is_ready():
-            if idx.is_loading():
-                raise HTTPException(
-                    status_code=425,
-                    detail="DART 금속 기업 인덱스를 구축 중입니다. 잠시 후 다시 시도하세요.",
-                )
-            raise HTTPException(status_code=503, detail="DART 인덱스를 사용할 수 없습니다.")
+    if idx and idx.is_ready():
         companies = idx.search_by_region(region_name, keyword=keyword or None)
-        return {"companies": companies}
+        return RegionCompaniesResponse(
+            companies=companies, index_loaded=True, message=""
+        )
 
     load_region_companies()  # dart_company_map.json 변경 시 재시작 없이 반영
-    companies = REGION_COMPANIES.get(region_name, [])
-    return {"companies": companies}
+    fallback = REGION_COMPANIES.get(region_name, [])
+    if fallback:
+        return RegionCompaniesResponse(
+            companies=fallback, index_loaded=False, message="DART 인덱스 대신 캐시 파일을 사용합니다."
+        )
+
+    return RegionCompaniesResponse(
+        companies=[],
+        index_loaded=False,
+        message="DART 인덱스가 로드되지 않았습니다. build_dart_metal_index.py 를 실행하여 dart_metal_index.json 을 생성해주세요.",
+    )
 
 
 @app.get("/api/regions", response_model=List[RegionSummary])

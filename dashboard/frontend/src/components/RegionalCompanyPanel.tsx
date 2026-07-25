@@ -3,6 +3,7 @@ import {
   cleanCompanyName,
   fetchRegionCompanies,
   getDARTSearchUrl,
+  RegionCompaniesResult,
   RegionCompany,
 } from "../utils/companyMapper";
 
@@ -12,6 +13,8 @@ interface Props {
 
 export default function RegionalCompanyPanel({ regionName }: Props) {
   const [companies, setCompanies] = useState<RegionCompany[]>([]);
+  const [indexLoaded, setIndexLoaded] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
@@ -25,12 +28,18 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
   useEffect(() => {
     if (!regionName) {
       setCompanies([]);
+      setIndexLoaded(false);
+      setStatusMessage("");
       return;
     }
     setLoading(true);
     setError(null);
     fetchRegionCompanies(regionName, debouncedKeyword)
-      .then(setCompanies)
+      .then((result: RegionCompaniesResult) => {
+        setCompanies(result.companies);
+        setIndexLoaded(result.indexLoaded);
+        setStatusMessage(result.message);
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [regionName, debouncedKeyword]);
@@ -69,11 +78,16 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
       {error && <p className="text-red-600 text-sm">{error}</p>}
 
       {!loading && !error && companies.length === 0 && (
-        <p className="text-gray-400 text-sm">
-          {debouncedKeyword
-            ? "검색 조건에 맞는 DART 기업 정보가 없습니다."
-            : "매핑된 DART 기업 정보가 없습니다."}
-        </p>
+        <div className="text-gray-400 text-sm space-y-1">
+          <p>
+            {debouncedKeyword
+              ? "검색 조건에 맞는 DART 기업 정보가 없습니다."
+              : "매핑된 DART 기업 정보가 없습니다."}
+          </p>
+          {statusMessage && !indexLoaded && (
+            <p className="text-amber-600 text-xs">{statusMessage}</p>
+          )}
+        </div>
       )}
 
       {!loading && !error && companies.length > 0 && (

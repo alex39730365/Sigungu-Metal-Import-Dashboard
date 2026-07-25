@@ -182,6 +182,31 @@ class DartCompanyIndex:
 
         self.session = self._create_session()
 
+        # 서버 구동 시 파일이 있으면 즉시 로드, 없으면 비어있는 상태로 둔다.
+        self._load_from_file()
+
+    def _load_from_file(self) -> bool:
+        """dart_metal_index.json 파일을 TTL 관계없이 즉시 메모리에 로드."""
+        if not self.cache_path.exists():
+            logger.warning("DART 인덱스 파일이 없습니다: %s", self.cache_path)
+            return False
+        try:
+            with open(self.cache_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            companies = payload.get("companies", [])
+            with self._lock:
+                self.companies = companies
+                self._loaded = bool(companies)
+                self._last_loaded_at = datetime.fromtimestamp(
+                    self.cache_path.stat().st_mtime
+                )
+                self._last_error = None
+            logger.info("DART 인덱스 파일 로드 완료: %s 건", len(companies))
+            return True
+        except Exception as e:
+            logger.error("DART 인덱스 파일 로드 실패: %s", e)
+            return False
+
     @staticmethod
     def _create_session() -> requests.Session:
         session = requests.Session()

@@ -8,6 +8,14 @@ export interface RegionCompany {
 
 interface RegionCompanyResponse {
   companies: RegionCompany[];
+  index_loaded: boolean;
+  message: string;
+}
+
+export interface RegionCompaniesResult {
+  companies: RegionCompany[];
+  indexLoaded: boolean;
+  message: string;
 }
 
 const BASE_URL = `${import.meta.env.VITE_API_BASE_URL ?? ""}/api`;
@@ -15,7 +23,7 @@ const BASE_URL = `${import.meta.env.VITE_API_BASE_URL ?? ""}/api`;
 export async function fetchRegionCompanies(
   regionName: string,
   keyword?: string
-): Promise<RegionCompany[]> {
+): Promise<RegionCompaniesResult> {
   const params = new URLSearchParams({ region_name: regionName });
   if (keyword?.trim()) {
     params.set("keyword", keyword.trim());
@@ -26,7 +34,11 @@ export async function fetchRegionCompanies(
     throw new Error(`API 요청 실패 (${res.status}): ${detail}`);
   }
   const data: RegionCompanyResponse = await res.json();
-  return data.companies;
+  return {
+    companies: data.companies,
+    indexLoaded: data.index_loaded,
+    message: data.message,
+  };
 }
 
 export function cleanCompanyName(name: string): string {
