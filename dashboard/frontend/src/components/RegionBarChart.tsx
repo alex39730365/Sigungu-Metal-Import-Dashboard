@@ -27,15 +27,15 @@ export default function RegionBarChart({ regions, selectedRegion, onSelectRegion
         시군구별 수입금액(USD) 순위 (상위 {data.length}개)
       </h3>
       <ResponsiveContainer width="100%" height="85%">
-        <BarChart data={data} layout="vertical" margin={{ left: 24, right: 16 }}>
+        <BarChart data={data} layout="vertical" margin={{ left: 8, right: 16 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
           <XAxis type="number" stroke="#6b7280" tick={{ fontSize: 11 }} />
           <YAxis
             type="category"
             dataKey="region_nm"
             stroke="#6b7280"
-            tick={{ fontSize: 11 }}
-            width={110}
+            tick={{ fontSize: 10 }}
+            width={150}
           />
           <Tooltip
             formatter={(value: number) => `$${value.toLocaleString()}`}
