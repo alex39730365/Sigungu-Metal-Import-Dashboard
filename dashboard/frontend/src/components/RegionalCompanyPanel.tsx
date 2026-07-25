@@ -14,6 +14,13 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
   const [companies, setCompanies] = useState<RegionCompany[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [keyword, setKeyword] = useState("");
+  const [debouncedKeyword, setDebouncedKeyword] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedKeyword(keyword), 400);
+    return () => clearTimeout(timer);
+  }, [keyword]);
 
   useEffect(() => {
     if (!regionName) {
@@ -22,11 +29,11 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
     }
     setLoading(true);
     setError(null);
-    fetchRegionCompanies(regionName)
+    fetchRegionCompanies(regionName, debouncedKeyword)
       .then(setCompanies)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [regionName]);
+  }, [regionName, debouncedKeyword]);
 
   if (!regionName) {
     return (
@@ -38,7 +45,7 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
 
   return (
     <div className="w-full bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-2">
         <h3 className="text-gray-800 text-sm font-semibold">
           {regionName} · 본사 및 등록 사업장 기준 주요 기업
         </h3>
@@ -50,12 +57,22 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
         </span>
       </div>
 
+      <input
+        type="text"
+        value={keyword}
+        onChange={(e) => setKeyword(e.target.value)}
+        placeholder="기업명 키워드 (예: 철강, 알루미늄, 포스코)"
+        className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-sky-200 focus:border-sky-400 mb-3"
+      />
+
       {loading && <p className="text-gray-500 text-sm">불러오는 중...</p>}
       {error && <p className="text-red-600 text-sm">{error}</p>}
 
       {!loading && !error && companies.length === 0 && (
         <p className="text-gray-400 text-sm">
-          매핑된 DART 기업 정보가 없습니다.
+          {debouncedKeyword
+            ? "검색 조건에 맞는 DART 기업 정보가 없습니다."
+            : "매핑된 DART 기업 정보가 없습니다."}
         </p>
       )}
 

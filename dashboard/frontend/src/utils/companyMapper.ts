@@ -12,10 +12,15 @@ interface RegionCompanyResponse {
 
 const BASE_URL = `${import.meta.env.VITE_API_BASE_URL ?? ""}/api`;
 
-export async function fetchRegionCompanies(regionName: string): Promise<RegionCompany[]> {
-  const res = await fetch(
-    `${BASE_URL}/region-companies?region_name=${encodeURIComponent(regionName)}`
-  );
+export async function fetchRegionCompanies(
+  regionName: string,
+  keyword?: string
+): Promise<RegionCompany[]> {
+  const params = new URLSearchParams({ region_name: regionName });
+  if (keyword?.trim()) {
+    params.set("keyword", keyword.trim());
+  }
+  const res = await fetch(`${BASE_URL}/region-companies?${params.toString()}`);
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`API 요청 실패 (${res.status}): ${detail}`);

@@ -46,6 +46,21 @@ from pydantic import BaseModel
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import sigungu_metal_import_collector as collector  # noqa: E402
+from dart_search import DartSearcher  # noqa: E402
+
+_dart_searcher: Optional[DartSearcher] = None
+
+
+def _get_dart_searcher() -> Optional[DartSearcher]:
+    global _dart_searcher
+    if _dart_searcher is None:
+        api_key = os.environ.get("DART_API_KEY")
+        if api_key:
+            try:
+                _dart_searcher = DartSearcher(api_key)
+            except Exception:
+                _dart_searcher = None
+    return _dart_searcher
 
 # ------------------------------------------------------------------------------
 # 설정
@@ -379,8 +394,20 @@ def _get_df_or_503() -> pd.DataFrame:
 
 
 @app.get("/api/region-companies", response_model=Dict[str, List[RegionCompany]])
-def get_region_companies(region_name: str) -> Dict[str, List[RegionCompany]]:
-    """선택한 시군구에 본사/등록 사업장을 둔 DART 기업 목록 반환."""
+def get_region_companies(region_name: str, keyword: str = "") -> Dict[str, List[RegionCompany]]:
+    """선택한 시군구에 본사/등록 사업장을 둔 DART 기업 목록 반환.
+
+    DART_API_KEY 가 설정되어 있으면 실시간으로 검색하고,
+    그렇지 않으면 dart_company_map.json 캐시를 사용합니다.
+    """
+    searcher = _get_dart_searcher()
+    if searcher:
+        try:
+            companies = searcher.search(region_name, keyword=keyword or None)
+            return {"companies": companies}
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"DART 검색 실패: {e}")
+
     load_region_companies()  # dart_company_map.json 변경 시 재시작 없이 반영
     companies = REGION_COMPANIES.get(region_name, [])
     return {"companies": companies}
