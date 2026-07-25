@@ -385,12 +385,6 @@ class DartCompanyIndex:
 
             # 1차: 기업명으로 후보 필터 (company.json 호출 최소화)
             name_candidates = [c for c in corps if is_metal_name(c["corp_name"])]
-            if len(name_candidates) > 800:
-                logger.warning(
-                    "DART 기업명 후보가 %s건으로 많아 800건으로 제한합니다",
-                    len(name_candidates),
-                )
-                name_candidates = name_candidates[:800]
             logger.info("DART 기업명 1차 필터 후보: %s 건", len(name_candidates))
 
             metal_companies: List[Dict[str, Any]] = []
