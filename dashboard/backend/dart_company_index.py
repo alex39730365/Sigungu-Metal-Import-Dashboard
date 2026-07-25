@@ -215,19 +215,21 @@ class DartCompanyIndex:
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             ),
-            "Accept": "application/json, application/xml, */*",
-            "Connection": "close",
+            "Accept": "application/json, application/xml, text/html, */*;q=0.9",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
         })
         retries = Retry(
-            total=1,
+            total=2,
             backoff_factor=1.0,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET"],
         )
         adapter = HTTPAdapter(
             max_retries=retries,
-            pool_connections=2,
-            pool_maxsize=4,
+            pool_connections=4,
+            pool_maxsize=8,
         )
         session.mount("https://", adapter)
         return session
