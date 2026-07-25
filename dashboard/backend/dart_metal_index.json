@@ -1,0 +1,14 @@
+{
+  "created_at": "2026-07-25T19:58:00",
+  "count": 1,
+  "companies": [
+    {
+      "corp_code": "00126380",
+      "corp_name": "포스코엠텍",
+      "stock_code": "009520",
+      "adres": "경상북도 포항시 남구",
+      "sigungu": "경상북도 포항시",
+      "induty_code": "243"
+    }
+  ]
+}
