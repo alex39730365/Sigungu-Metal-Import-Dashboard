@@ -156,19 +156,19 @@ class DartSearcher:
             "Accept": "application/json, application/xml, */*",
         })
         retries = Retry(
-            total=3,
-            backoff_factor=0.5,
+            total=1,
+            backoff_factor=0.3,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET"],
         )
-        adapter = HTTPAdapter(max_retries=retries, pool_connections=8, pool_maxsize=16)
+        adapter = HTTPAdapter(max_retries=retries, pool_connections=6, pool_maxsize=12)
         session.mount("https://", adapter)
         return session
 
     def _fetch_corp_codes(self) -> List[Dict[str, str]]:
         """DART 고유번호 목록을 다운로드/파싱 (zip+xml)."""
         resp = self.session.get(
-            CORP_CODE_URL, params={"crtfc_key": self.api_key}, timeout=120
+            CORP_CODE_URL, params={"crtfc_key": self.api_key}, timeout=12
         )
         resp.raise_for_status()
 
@@ -210,7 +210,7 @@ class DartSearcher:
             resp = self.session.get(
                 COMPANY_URL,
                 params={"crtfc_key": self.api_key, "corp_code": corp["corp_code"]},
-                timeout=20,
+                timeout=5,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -232,8 +232,8 @@ class DartSearcher:
         self,
         region_name: str,
         keyword: Optional[str] = None,
-        limit: int = 50,
-        max_candidates: int = 120,
+        limit: int = 40,
+        max_candidates: int = 40,
     ) -> List[Dict[str, Any]]:
         """지역 + 키워드로 금속 관련 DART 기업을 실시간 검색."""
         cache_key = (region_name.strip(), (keyword or "").strip())
@@ -260,8 +260,8 @@ class DartSearcher:
         results: List[Dict[str, Any]] = []
 
         start_time = time.time()
-        max_runtime = 40  # 초
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        max_runtime = 10  # 초
+        with ThreadPoolExecutor(max_workers=6) as executor:
             future_to_corp = {
                 executor.submit(self._fetch_company, c): c for c in candidates
             }
@@ -282,6 +282,20 @@ class DartSearcher:
         results = results[:limit]
         self._result_cache[cache_key] = (datetime.now(), results)
         return results
+
+    def status(self) -> Dict[str, Any]:
+        """현재 DART 검색기 상태 반환 (디버깅용)."""
+        return {
+            "api_key_set": bool(self.api_key),
+            "corp_codes_loaded": bool(self._corp_codes),
+            "corp_codes_count": len(self._corp_codes),
+            "corp_codes_fetched_at": (
+                self._corp_codes_fetched_at.isoformat()
+                if self._corp_codes_fetched_at
+                else None
+            ),
+            "result_cache_count": len(self._result_cache),
+        }
 
     def clear_cache(self) -> None:
         self._corp_codes = []

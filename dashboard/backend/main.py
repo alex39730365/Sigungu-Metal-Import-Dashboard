@@ -46,21 +46,16 @@ from pydantic import BaseModel
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import sigungu_metal_import_collector as collector  # noqa: E402
-from dart_search import DartSearcher  # noqa: E402
+from dart_company_index import DartCompanyIndex, create_dart_index  # noqa: E402
 
-_dart_searcher: Optional[DartSearcher] = None
+_dart_index: Optional[DartCompanyIndex] = None
 
 
-def _get_dart_searcher() -> Optional[DartSearcher]:
-    global _dart_searcher
-    if _dart_searcher is None:
-        api_key = os.environ.get("DART_API_KEY")
-        if api_key:
-            try:
-                _dart_searcher = DartSearcher(api_key)
-            except Exception:
-                _dart_searcher = None
-    return _dart_searcher
+def _get_dart_index() -> Optional[DartCompanyIndex]:
+    global _dart_index
+    if _dart_index is None:
+        _dart_index = create_dart_index()
+    return _dart_index
 
 # ------------------------------------------------------------------------------
 # 설정
@@ -299,6 +294,10 @@ def on_startup() -> None:
     # 캐시 파일이 있으면 로드하여 즉시 서비스하고, 없을 때만 API 수집을 시작한다.
     if cache.df.empty:
         cache.start_refresh(DEFAULT_STRT_YYMM, DEFAULT_END_YYMM)
+    # DART 금속 기업 인덱스를 백그라운드에서 구축/갱신
+    idx = _get_dart_index()
+    if idx:
+        idx.start_background_refresh()
     # 월 1회(15~20일) 자동 업데이트 스케줄러 실행
     threading.Thread(target=_monthly_update_scheduler, daemon=True).start()
 
@@ -393,20 +392,36 @@ def _get_df_or_503() -> pd.DataFrame:
     return df
 
 
+@app.get("/api/dart-status")
+def dart_status() -> Dict[str, Any]:
+    """DART API 키 설정 및 인덱스 상태 확인."""
+    idx = _get_dart_index()
+    return {
+        "dart_api_key_set": bool(os.environ.get("DART_API_KEY")),
+        "index_ready": idx.is_ready() if idx else False,
+        "index_status": idx.status() if idx else None,
+        "message": "DART_API_KEY가 설정되면 서버 구동 시 금속 기업 인덱스를 구축합니다.",
+    }
+
+
 @app.get("/api/region-companies", response_model=Dict[str, List[RegionCompany]])
 def get_region_companies(region_name: str, keyword: str = "") -> Dict[str, List[RegionCompany]]:
     """선택한 시군구에 본사/등록 사업장을 둔 DART 기업 목록 반환.
 
-    DART_API_KEY 가 설정되어 있으면 실시간으로 검색하고,
+    DART_API_KEY 가 설정되어 있으면 사전 구축된 금속 기업 인덱스에서 검색하고,
     그렇지 않으면 dart_company_map.json 캐시를 사용합니다.
     """
-    searcher = _get_dart_searcher()
-    if searcher:
-        try:
-            companies = searcher.search(region_name, keyword=keyword or None)
-            return {"companies": companies}
-        except Exception as e:
-            raise HTTPException(status_code=503, detail=f"DART 검색 실패: {e}")
+    idx = _get_dart_index()
+    if idx:
+        if not idx.is_ready():
+            if idx.is_loading():
+                raise HTTPException(
+                    status_code=425,
+                    detail="DART 금속 기업 인덱스를 구축 중입니다. 잠시 후 다시 시도하세요.",
+                )
+            raise HTTPException(status_code=503, detail="DART 인덱스를 사용할 수 없습니다.")
+        companies = idx.search_by_region(region_name, keyword=keyword or None)
+        return {"companies": companies}
 
     load_region_companies()  # dart_company_map.json 변경 시 재시작 없이 반영
     companies = REGION_COMPANIES.get(region_name, [])
