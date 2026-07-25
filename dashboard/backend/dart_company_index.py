@@ -137,10 +137,14 @@ def extract_sigungu(address: str) -> Optional[str]:
     return f"{sido} {sigungu}"
 
 
+def is_metal_name(name: str) -> bool:
+    """기업명에 금속 관련 키워드가 포함되면 True."""
+    return any(k in name.lower() for k in METAL_KEYWORDS)
+
+
 def is_metal_related(name: str, induty_code: Optional[str]) -> bool:
     """기업명 또는 업종코드가 금속 관련이면 True."""
-    lower_name = name.lower()
-    if any(k in lower_name for k in METAL_KEYWORDS):
+    if is_metal_name(name):
         return True
     if induty_code and induty_code.startswith(METAL_INDUSTRY_PREFIXES):
         return True
@@ -154,9 +158,9 @@ class DartCompanyIndex:
         self,
         api_key: str,
         cache_dir: Optional[Path] = None,
-        max_workers: int = 6,
+        max_workers: int = 2,
         refresh_interval_hours: int = 24,
-        chunk_size: int = 500,
+        chunk_size: int = 10,
     ) -> None:
         if not api_key:
             raise RuntimeError("DART_API_KEY 는 필수입니다.")
@@ -187,17 +191,18 @@ class DartCompanyIndex:
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             ),
             "Accept": "application/json, application/xml, */*",
+            "Connection": "close",
         })
         retries = Retry(
-            total=2,
-            backoff_factor=0.5,
+            total=1,
+            backoff_factor=1.0,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET"],
         )
         adapter = HTTPAdapter(
             max_retries=retries,
-            pool_connections=8,
-            pool_maxsize=16,
+            pool_connections=2,
+            pool_maxsize=4,
         )
         session.mount("https://", adapter)
         return session
@@ -350,11 +355,21 @@ class DartCompanyIndex:
 
         try:
             corps = self._fetch_corp_codes()
-            metal_companies: List[Dict[str, Any]] = []
 
-            total = len(corps)
+            # 1차: 기업명으로 후보 필터 (company.json 호출 최소화)
+            name_candidates = [c for c in corps if is_metal_name(c["corp_name"])]
+            if len(name_candidates) > 800:
+                logger.warning(
+                    "DART 기업명 후보가 %s건으로 많아 800건으로 제한합니다",
+                    len(name_candidates),
+                )
+                name_candidates = name_candidates[:800]
+            logger.info("DART 기업명 1차 필터 후보: %s 건", len(name_candidates))
+
+            metal_companies: List[Dict[str, Any]] = []
+            total = len(name_candidates)
             for i in range(0, total, self.chunk_size):
-                chunk = corps[i : i + self.chunk_size]
+                chunk = name_candidates[i : i + self.chunk_size]
                 chunk_results: List[Dict[str, Any]] = []
                 with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                     future_to_corp = {
@@ -377,11 +392,11 @@ class DartCompanyIndex:
                 )
 
                 # rate limit 완화 및 중간 캐싱
+                with self._lock:
+                    self.companies = metal_companies.copy()
+                self._save_cache()
                 if i + self.chunk_size < total:
-                    with self._lock:
-                        self.companies = metal_companies.copy()
-                    self._save_cache()
-                    time.sleep(0.5)
+                    time.sleep(0.6)
 
             with self._lock:
                 self.companies = metal_companies
