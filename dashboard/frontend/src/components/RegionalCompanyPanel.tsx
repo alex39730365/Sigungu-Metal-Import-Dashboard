@@ -17,13 +17,6 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
   const [statusMessage, setStatusMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [keyword, setKeyword] = useState("");
-  const [debouncedKeyword, setDebouncedKeyword] = useState("");
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedKeyword(keyword), 400);
-    return () => clearTimeout(timer);
-  }, [keyword]);
 
   useEffect(() => {
     if (!regionName) {
@@ -34,7 +27,7 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
     }
     setLoading(true);
     setError(null);
-    fetchRegionCompanies(regionName, debouncedKeyword)
+    fetchRegionCompanies(regionName)
       .then((result: RegionCompaniesResult) => {
         setCompanies(result.companies);
         setIndexLoaded(result.indexLoaded);
@@ -42,7 +35,7 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [regionName, debouncedKeyword]);
+  }, [regionName]);
 
   if (!regionName) {
     return (
@@ -66,24 +59,12 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
         </span>
       </div>
 
-      <input
-        type="text"
-        value={keyword}
-        onChange={(e) => setKeyword(e.target.value)}
-        placeholder="기업명 키워드 (예: 철강, 알루미늄, 포스코)"
-        className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-sky-200 focus:border-sky-400 mb-3"
-      />
-
       {loading && <p className="text-gray-500 text-sm">불러오는 중...</p>}
       {error && <p className="text-red-600 text-sm">{error}</p>}
 
       {!loading && !error && companies.length === 0 && (
         <div className="text-gray-400 text-sm space-y-1">
-          <p>
-            {debouncedKeyword
-              ? "검색 조건에 맞는 DART 기업 정보가 없습니다."
-              : "매핑된 DART 기업 정보가 없습니다."}
-          </p>
+          <p>매핑된 DART 기업 정보가 없습니다.</p>
           {statusMessage && !indexLoaded && (
             <p className="text-amber-600 text-xs">{statusMessage}</p>
           )}
