@@ -6,7 +6,6 @@ import RegionBarChart from "./components/RegionBarChart";
 import MetalBreakdownPanel from "./components/MetalBreakdownPanel";
 import MetalSearchPanel from "./components/MetalSearchPanel";
 import RegionalCompanyPanel from "./components/RegionalCompanyPanel";
-import ExportPanel from "./components/ExportPanel";
 import StatusBar from "./components/StatusBar";
 
 export default function App() {
@@ -30,11 +29,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleHeaderExcel = async (regionOnly: boolean) => {
+  const handleHeaderExcel = async () => {
     if (excelLoading) return;
     setExcelLoading(true);
     try {
-      await downloadExcel(regionOnly ? selectedRegion : undefined);
+      await downloadExcel(undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : "엑셀 내보내기 실패");
     } finally {
@@ -69,7 +68,7 @@ export default function App() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => handleHeaderExcel(false)}
+            onClick={() => handleHeaderExcel()}
             disabled={excelLoading}
             className="inline-flex items-center gap-2 px-4 py-2 bg-sky-600 text-white text-sm font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
@@ -88,29 +87,6 @@ export default function App() {
               <line x1="12" y1="15" x2="12" y2="3" />
             </svg>
             {excelLoading ? "내보내는 중..." : "전체 엑셀"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleHeaderExcel(true)}
-            disabled={excelLoading || !selectedRegion}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-white text-sky-700 border border-sky-200 text-sm font-medium rounded-lg hover:bg-sky-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="w-4 h-4"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            {selectedRegion ? `선택 지역 엑셀` : "지역 선택"}
           </button>
         </div>
       </header>
@@ -148,7 +124,6 @@ export default function App() {
               selectedRegion={selectedRegion}
               onSelectRegion={setSelectedRegion}
             />
-            <ExportPanel selectedRegion={selectedRegion} />
             <MetalBreakdownPanel regionName={selectedRegion} />
             <RegionalCompanyPanel regionName={selectedRegion} />
 
