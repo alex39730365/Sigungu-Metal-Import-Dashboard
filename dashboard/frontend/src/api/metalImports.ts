@@ -8,16 +8,31 @@ import {
 
 const BASE_URL = `${import.meta.env.VITE_API_BASE_URL ?? ""}/api`;
 
-async function getJson<T>(path: string): Promise<T> {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getJson<T>(path: string, retriesLeft: number = 3): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`);
   const contentType = res.headers.get("content-type") ?? "";
 
   if (!res.ok || contentType.includes("text/html")) {
     const detail = await res.text();
-    if (detail.trim().toLowerCase().startsWith("<!doctype") || detail.trim().startsWith("<")) {
+    const looksLikeHtml =
+      detail.trim().toLowerCase().startsWith("<!doctype") || detail.trim().startsWith("<");
+
+    // Render 무료 플랜은 유휴 시 슬립 상태가 되며, 깨어나는 동안(최대 ~50초)
+    // 502/HTML 응답을 반환할 수 있다. 이 경우 잠시 대기 후 재시도한다.
+    if (looksLikeHtml && retriesLeft > 0) {
+      await sleep(5000);
+      return getJson<T>(path, retriesLeft - 1);
+    }
+
+    if (looksLikeHtml) {
       throw new Error(
         `백엔드 API 주소가 잘못되었거나 설정되지 않았습니다. ` +
-        `VITE_API_BASE_URL(${BASE_URL})를 확인하고, Cloudflare Pages나 Render 백엔드가 정상적으로 동작하는지 확인하세요.`
+        `VITE_API_BASE_URL(${BASE_URL})를 확인하고, Cloudflare Pages나 Render 백엔드가 정상적으로 동작하는지 확인하세요. ` +
+        `(Render 무료 플랜은 유휴 후 첫 요청 시 최대 1분 정도 걸릴 수 있습니다. 잠시 후 새로고침 해보세요.)`
       );
     }
     throw new Error(`API 요청 실패 (${res.status}): ${detail}`);
