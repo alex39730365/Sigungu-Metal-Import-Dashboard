@@ -50,3 +50,23 @@ export function downloadExcelUrl(regionName?: string | null): string {
   const query = params.toString();
   return `${BASE_URL}/export/excel${query ? `?${query}` : ""}`;
 }
+
+export async function downloadExcel(regionName?: string | null): Promise<void> {
+  const url = downloadExcelUrl(regionName);
+  const res = await fetch(url);
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`다운로드 실패 (${res.status}): ${detail}`);
+  }
+  const blob = await res.blob();
+  const safeName = regionName ? regionName.replace(/\s+/g, "_") : "전체";
+  const filename = `sigungu_metal_imports_${safeName}.xlsx`;
+
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+}

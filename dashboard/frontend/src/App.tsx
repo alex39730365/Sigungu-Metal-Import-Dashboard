@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchRegions } from "./api/metalImports";
+import { downloadExcel, fetchRegions } from "./api/metalImports";
 import { RegionSummary } from "./types";
 import KoreaBubbleMap from "./components/KoreaBubbleMap";
 import RegionBarChart from "./components/RegionBarChart";
@@ -15,6 +15,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [excelLoading, setExcelLoading] = useState(false);
 
   const loadRegions = useCallback(() => {
     setLoading(true);
@@ -29,6 +30,18 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const handleHeaderExcel = async (regionOnly: boolean) => {
+    if (excelLoading) return;
+    setExcelLoading(true);
+    try {
+      await downloadExcel(regionOnly ? selectedRegion : undefined);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "엑셀 내보내기 실패");
+    } finally {
+      setExcelLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadRegions();
   }, [loadRegions]);
@@ -42,14 +55,64 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 p-6">
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold">시군구별 금속 수입 대시보드</h1>
-        <p className="text-gray-500 text-sm mt-1">
-          관세청 시군구별 품목별 수출입실적 API 기반 · 비귀금속(철강·비철금속·희유금속·리튬화합물)
-        </p>
-        <p className="text-gray-400 text-xs mt-0.5">
-          공표주기 : 1개월 · 공표시기 : 매월 15일경 수출입 신고의 정정, 취하 등 변경내역을 반영하여 전월까지의 자료를 현행화
-        </p>
+      <header className="mb-6 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">시군구별 금속 수입 대시보드</h1>
+          <p className="text-gray-500 text-sm mt-1">
+            관세청 시군구별 품목별 수출입실적 API 기반 · 비귀금속(철강·비철금속·희유금속·리튬화합물)
+          </p>
+          <p className="text-gray-400 text-xs mt-0.5">
+            공표주기 : 1개월 · 공표시기 : 매월 15일경 수출입 신고의 정정, 취하 등 변경내역을 반영하여 전월까지의 자료를 현행화
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleHeaderExcel(false)}
+            disabled={excelLoading}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-sky-600 text-white text-sm font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            {excelLoading ? "내보내는 중..." : "전체 엑셀"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleHeaderExcel(true)}
+            disabled={excelLoading || !selectedRegion}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white text-sky-700 border border-sky-200 text-sm font-medium rounded-lg hover:bg-sky-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            {selectedRegion ? `선택 지역 엑셀` : "지역 선택"}
+          </button>
+        </div>
       </header>
 
       <StatusBar onDataReady={loadRegions} />

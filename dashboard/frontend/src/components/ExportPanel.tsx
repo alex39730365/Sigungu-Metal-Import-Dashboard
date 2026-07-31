@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { downloadExcelUrl } from "../api/metalImports";
+import { downloadExcel } from "../api/metalImports";
 
 interface ExportPanelProps {
   selectedRegion: string | null;
@@ -12,28 +12,8 @@ export default function ExportPanel({ selectedRegion }: ExportPanelProps) {
   async function handleDownload(regionOnly: boolean) {
     setDownloading(true);
     setError(null);
-    const url = downloadExcelUrl(regionOnly ? selectedRegion : undefined);
-
     try {
-      const res = await fetch(url);
-      if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(`다운로드 실패 (${res.status}): ${detail}`);
-      }
-
-      const blob = await res.blob();
-      const safeName = regionOnly && selectedRegion
-        ? selectedRegion.replace(/\s+/g, "_")
-        : "전체";
-      const filename = `sigungu_metal_imports_${safeName}.xlsx`;
-
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(a.href);
+      await downloadExcel(regionOnly ? selectedRegion : undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : "엑셀 내보내기 실패");
     } finally {
@@ -42,8 +22,24 @@ export default function ExportPanel({ selectedRegion }: ExportPanelProps) {
   }
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
-      <h3 className="text-gray-800 text-sm font-semibold mb-3">엑셀 내보내기</h3>
+    <div className="bg-white rounded-2xl border-2 border-sky-200 p-4 shadow-sm">
+      <h3 className="text-sky-800 text-sm font-semibold mb-3 flex items-center gap-2">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          className="w-4 h-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" />
+          <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
+        엑셀 내보내기
+      </h3>
 
       <div className="flex flex-col gap-2">
         <button
@@ -71,9 +67,7 @@ export default function ExportPanel({ selectedRegion }: ExportPanelProps) {
         </button>
       </div>
 
-      {error && (
-        <p className="text-red-600 text-xs mt-2">{error}</p>
-      )}
+      {error && <p className="text-red-600 text-xs mt-2">{error}</p>}
     </div>
   );
 }
