@@ -31,7 +31,7 @@ jobs:
         run: |
           API_URL="${{ secrets.VITE_API_BASE_URL }}"
           if [ -z "$API_URL" ]; then
-            API_URL="https://sigungu-metal-dashboard-api.onrender.com"
+            API_URL="https://sigungu-metal-import-dashboard.onrender.com"
             echo "⚠️ VITE_API_BASE_URL secret is not set. Falling back to $API_URL"
             echo "If your backend is at a different URL, set the VITE_API_BASE_URL GitHub secret."
           fi
@@ -55,6 +55,6 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: sigungu-metal-dashboard
+          projectName: sigungu-metal-import-dashboard
           directory: dashboard/frontend/dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}

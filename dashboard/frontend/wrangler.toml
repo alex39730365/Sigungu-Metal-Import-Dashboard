@@ -1,8 +1,8 @@
 # Cloudflare Pages 설정
-# - Pages 프로젝트 이름: sigungu-metal-dashboard
+# - Pages 프로젝트 이름: sigungu-metal-import-dashboard
 # - Cloudflare Dashboard 또는 wrangler CLI에서 프로젝트를 먼저 생성해야 합니다.
 # - 배포 시 VITE_API_BASE_URL 환경변수에 Render 백엔드 URL을 설정하세요.
 
-name = "sigungu-metal-dashboard"
+name = "sigungu-metal-import-dashboard"
 pages_build_output_dir = "dist"
 compatibility_date = "2024-01-01"
