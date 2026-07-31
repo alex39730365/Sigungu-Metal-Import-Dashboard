@@ -40,12 +40,17 @@ jobs:
       - name: Install and build frontend
         env:
           VITE_API_BASE_URL: ${{ steps.api_url.outputs.VITE_API_BASE_URL }}
+          CI: "true"
+          NPM_CONFIG_AUDIT: "false"
+          NPM_CONFIG_FUND: "false"
+          NPM_CONFIG_ALLOW_SCRIPTS: "true"
         run: |
           cd dashboard/frontend
-          npm install
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Deploy to Cloudflare Pages
+        timeout-minutes: 15
         uses: cloudflare/pages-action@v1
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
