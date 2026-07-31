@@ -608,17 +608,12 @@ def get_metal_regions(metal_category: str, limit: int = 20) -> List[MetalRegionI
     return results
 
 
-@app.get("/api/export/excel")
-def export_excel(
-    region_name: Optional[str] = Query(None, description="특정 시군구를 지정하면 해당 지역 중심의 워크북을 생성합니다.")
-) -> StreamingResponse:
-    """현재 데이터를 엑셀(.xlsx)로 내보냅니다.
+# region_name -> (생성된 xlsx bytes, 생성 시점 기준이 된 cache.last_updated)
+_excel_cache: Dict[Optional[str], "tuple[bytes, Optional[datetime]]"] = {}
+_excel_cache_lock = threading.Lock()
 
-    - region_name 미지정: 전체 시군구·금속 요약 + 시군구×금속 매트릭스 + 원본 데이터
-    - region_name 지정: 요약 + 선택 시군구의 금속별 비중/추이 + 해당 지역 원본 데이터
-    """
-    df = _get_df_or_503()
 
+def _build_excel_bytes(df: pd.DataFrame, region_name: Optional[str]) -> bytes:
     output = BytesIO()
     try:
         # xlsxwriter는 openpyxl보다 문자열 처리/내부 자료구조가 가벼워 메모리 사용량이
@@ -638,13 +633,37 @@ def export_excel(
             status_code=500,
             detail=f"엑셀 생성 중 오류가 발생했습니다: {exc}",
         ) from exc
+    return output.getvalue()
 
-    output.seek(0)
+
+@app.get("/api/export/excel")
+def export_excel(
+    region_name: Optional[str] = Query(None, description="특정 시군구를 지정하면 해당 지역 중심의 워크북을 생성합니다.")
+) -> StreamingResponse:
+    """현재 데이터를 엑셀(.xlsx)로 내보냅니다.
+
+    - region_name 미지정: 전체 시군구·금속 요약 + 시군구×금속 매트릭스 + 원본 데이터
+    - region_name 지정: 요약 + 선택 시군구의 금속별 비중/추이 + 해당 지역 원본 데이터
+
+    데이터가 갱신되기 전까지는 동일한 region_name에 대해 생성된 워크북을
+    메모리에 캐싱하여 재사용한다 (매 요청마다 6만+ 행을 다시 쓰지 않는다).
+    """
+    df = _get_df_or_503()
+    current_updated = cache.last_updated
+
+    with _excel_cache_lock:
+        cached = _excel_cache.get(region_name)
+        if cached is not None and cached[1] == current_updated:
+            content = cached[0]
+        else:
+            content = _build_excel_bytes(df, region_name)
+            _excel_cache[region_name] = (content, current_updated)
+
     safe_name = region_name.replace(" ", "_") if region_name else "전체"
     filename = f"sigungu_metal_imports_{safe_name}.xlsx"
     encoded = quote(filename)
     return StreamingResponse(
-        output,
+        BytesIO(content),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"
