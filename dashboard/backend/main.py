@@ -621,14 +621,10 @@ def export_excel(
 
     output = BytesIO()
     try:
-        # xlsxwriter의 constant_memory 옵션은 행을 순서대로 즉시 디스크(버퍼)에
-        # 기록하여 openpyxl 대비 대용량 시트(6만+ 행)를 훨씬 적은 메모리로 생성한다.
-        # 단, 시트별로 행을 순서대로만 써야 하며 셀을 되돌아가 수정할 수 없다.
-        with pd.ExcelWriter(
-            output,
-            engine="xlsxwriter",
-            engine_kwargs={"options": {"constant_memory": True}},
-        ) as writer:
+        # xlsxwriter는 openpyxl보다 문자열 처리/내부 자료구조가 가벼워 메모리 사용량이
+        # 적다. (constant_memory 옵션은 pandas의 열 단위 기록 방식과 호환되지 않아
+        # 데이터가 유실되는 문제가 있어 사용하지 않는다.)
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             _write_export_sheets(writer, df, region_name)
     except MemoryError as exc:
         raise HTTPException(
