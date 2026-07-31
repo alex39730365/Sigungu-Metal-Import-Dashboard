@@ -6,6 +6,7 @@ import RegionBarChart from "./components/RegionBarChart";
 import MetalBreakdownPanel from "./components/MetalBreakdownPanel";
 import MetalSearchPanel from "./components/MetalSearchPanel";
 import RegionalCompanyPanel from "./components/RegionalCompanyPanel";
+import ExportPanel from "./components/ExportPanel";
 import StatusBar from "./components/StatusBar";
 
 export default function App() {
@@ -84,6 +85,7 @@ export default function App() {
               selectedRegion={selectedRegion}
               onSelectRegion={setSelectedRegion}
             />
+            <ExportPanel selectedRegion={selectedRegion} />
             <MetalBreakdownPanel regionName={selectedRegion} />
             <RegionalCompanyPanel regionName={selectedRegion} />
 

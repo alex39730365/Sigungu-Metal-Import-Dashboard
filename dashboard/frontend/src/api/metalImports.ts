@@ -41,3 +41,12 @@ export function fetchMetalRegions(
     `/metals/${encodeURIComponent(metalCategory)}/regions?limit=${limit}`
   );
 }
+
+export function downloadExcelUrl(regionName?: string | null): string {
+  const params = new URLSearchParams();
+  if (regionName) {
+    params.set("region_name", regionName);
+  }
+  const query = params.toString();
+  return `${BASE_URL}/export/excel${query ? `?${query}` : ""}`;
+}

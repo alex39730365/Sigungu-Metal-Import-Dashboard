@@ -34,12 +34,15 @@ import sys
 import threading
 import time
 from datetime import date, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 # 프로젝트 루트의 sigungu_metal_import_collector.py 를 import 하기 위한 경로 추가
@@ -572,6 +575,101 @@ def get_metal_regions(metal_category: str, limit: int = 20) -> List[MetalRegionI
             )
         )
     return results
+
+
+@app.get("/api/export/excel")
+def export_excel(
+    region_name: Optional[str] = Query(None, description="특정 시군구를 지정하면 해당 지역 중심의 워크북을 생성합니다.")
+) -> StreamingResponse:
+    """현재 데이터를 엑셀(.xlsx)로 내보냅니다.
+
+    - region_name 미지정: 전체 시군구·금속 요약 + 시군구×금속 매트릭스 + 원본 데이터
+    - region_name 지정: 요약 + 선택 시군구의 금속별 비중/추이 + 해당 지역 원본 데이터
+    """
+    df = _get_df_or_503()
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        # 1) 시군구별 요약
+        region_summary = (
+            df.groupby("시군구명", as_index=False)
+            .agg(
+                총수입금액=("수입금액(USD)", "sum"),
+                총수입건수=("수입건수", "sum"),
+            )
+            .sort_values("총수입금액", ascending=False)
+        )
+        region_summary.to_excel(writer, sheet_name="시군구별_요약", index=False)
+
+        # 2) 금속별 요약
+        metal_summary = (
+            df.groupby("금속구분", as_index=False)
+            .agg(
+                총수입금액=("수입금액(USD)", "sum"),
+                총수입건수=("수입건수", "sum"),
+            )
+            .sort_values("총수입금액", ascending=False)
+        )
+        metal_summary.to_excel(writer, sheet_name="금속별_요약", index=False)
+
+        # 3) 시군구 × 금속 매트릭스
+        pivot = df.pivot_table(
+            index="시군구명",
+            columns="금속구분",
+            values="수입금액(USD)",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        pivot.to_excel(writer, sheet_name="시군구_금속별_금액")
+
+        # 4) 원본 데이터 (전체 또는 선택 시군구)
+        target_df = df[df["시군구명"] == region_name] if region_name else df
+        if target_df.empty:
+            raise HTTPException(status_code=404, detail=f"'{region_name}' 데이터가 없습니다.")
+
+        target_df.to_excel(writer, sheet_name="원본_데이터", index=False)
+
+        # 5) 선택 시군구 전용 시트
+        if region_name:
+            breakdown = (
+                target_df.groupby("금속구분", as_index=False)
+                .agg(
+                    수입금액=("수입금액(USD)", "sum"),
+                    수입건수=("수입건수", "sum"),
+                )
+                .sort_values("수입금액", ascending=False)
+            )
+            total = breakdown["수입금액"].sum()
+            breakdown["비중(%)"] = (
+                (breakdown["수입금액"] / total * 100).round(2) if total > 0 else 0.0
+            )
+            breakdown.to_excel(
+                writer, sheet_name="선택_시군구_금속별", index=False
+            )
+
+            timeseries = (
+                target_df.groupby("연월", as_index=False)
+                .agg(
+                    수입금액=("수입금액(USD)", "sum"),
+                    수입건수=("수입건수", "sum"),
+                )
+                .sort_values("연월")
+            )
+            timeseries.to_excel(
+                writer, sheet_name="선택_시군구_추이", index=False
+            )
+
+    output.seek(0)
+    safe_name = region_name.replace(" ", "_") if region_name else "전체"
+    filename = f"sigungu_metal_imports_{safe_name}.xlsx"
+    encoded = quote(filename)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"
+        },
+    )
 
 
 if __name__ == "__main__":
