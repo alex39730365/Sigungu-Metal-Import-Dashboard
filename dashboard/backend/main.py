@@ -66,7 +66,12 @@ def _get_dart_index() -> Optional[DartCompanyIndex]:
 
 DEFAULT_STRT_YYMM = os.environ.get("METAL_STRT_YYMM", "202401")
 DEFAULT_END_YYMM = os.environ.get("METAL_END_YYMM", "202412")
-CACHE_FILE = Path(__file__).resolve().parents[2] / "data_cache.json"
+# 데이터 캐시는 Parquet(바이너리 컬럼형 포맷)으로 저장한다.
+# JSON 대비 파일 크기와 로드 시 메모리 사용량이 훨씬 작고 파싱 속도도 빠르다.
+CACHE_FILE = Path(__file__).resolve().parents[2] / "data_cache.parquet"
+CACHE_META_FILE = Path(__file__).resolve().parents[2] / "data_cache_meta.json"
+# 이전 버전(JSON 캐시)과의 하위 호환을 위한 경로. 존재하면 1회 마이그레이션한다.
+LEGACY_JSON_CACHE_FILE = Path(__file__).resolve().parents[2] / "data_cache.json"
 LAST_AUTO_UPDATE_FILE = Path(__file__).resolve().parents[2] / ".last_auto_update"
 AUTO_UPDATE_DAY_START = int(os.environ.get("METAL_AUTO_UPDATE_DAY_START", "15"))
 AUTO_UPDATE_DAY_END = int(os.environ.get("METAL_AUTO_UPDATE_DAY_END", "20"))
@@ -136,36 +141,61 @@ class DataCache:
         self._load_cache()
 
     def _load_cache(self) -> None:
-        """로컬 JSON 캐시 파일이 있으면 메모리에 로드한다."""
-        if not CACHE_FILE.exists():
-            return
+        """로컬 Parquet 캐시 파일이 있으면 메모리에 1회 로드한다.
+
+        이후 모든 API 엔드포인트는 디스크를 다시 읽지 않고 이 메모리
+        데이터프레임(self.df)에서만 조회한다.
+        """
         try:
-            with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-            df = pd.DataFrame(payload["rows"])
-            if df.empty:
-                return
-            with self._lock:
-                self.df = df
-                self.last_updated = (
+            if CACHE_FILE.exists():
+                df = pd.read_parquet(CACHE_FILE, engine="pyarrow")
+                last_updated = self._read_meta_timestamp() or datetime.fromtimestamp(
+                    CACHE_FILE.stat().st_mtime
+                )
+            elif LEGACY_JSON_CACHE_FILE.exists():
+                # 구버전 JSON 캐시가 남아있다면 1회 마이그레이션한다.
+                with open(LEGACY_JSON_CACHE_FILE, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                df = pd.DataFrame(payload["rows"])
+                last_updated = (
                     datetime.fromisoformat(payload["last_updated"])
                     if payload.get("last_updated")
-                    else datetime.fromtimestamp(CACHE_FILE.stat().st_mtime)
+                    else datetime.fromtimestamp(LEGACY_JSON_CACHE_FILE.stat().st_mtime)
                 )
+                if not df.empty:
+                    self._save_cache(df, last_updated)
+            else:
+                return
+
+            if df.empty:
+                return
+
+            with self._lock:
+                self.df = df
+                self.last_updated = last_updated
                 self.loaded_from_cache = True
                 self.last_error = None
         except Exception as exc:  # noqa: BLE001
             with self._lock:
                 self.last_error = f"캐시 파일 로드 실패: {exc}"
 
+    @staticmethod
+    def _read_meta_timestamp() -> Optional[datetime]:
+        if not CACHE_META_FILE.exists():
+            return None
+        try:
+            with open(CACHE_META_FILE, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            ts = meta.get("last_updated")
+            return datetime.fromisoformat(ts) if ts else None
+        except Exception:  # noqa: BLE001
+            return None
+
     def _save_cache(self, df: pd.DataFrame, last_updated: datetime) -> None:
-        """데이터프레임을 로컬 JSON 파일로 저장한다."""
-        records = json.loads(
-            df.to_json(orient="records", force_ascii=False, date_format="iso")
-        )
-        payload = {"last_updated": last_updated.isoformat(), "rows": records}
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False)
+        """데이터프레임을 Parquet 파일 + 메타데이터(JSON)로 저장한다."""
+        df.to_parquet(CACHE_FILE, engine="pyarrow", index=False)
+        with open(CACHE_META_FILE, "w", encoding="utf-8") as f:
+            json.dump({"last_updated": last_updated.isoformat()}, f, ensure_ascii=False)
 
     def start_refresh(self, strt_yymm: str, end_yymm: str) -> None:
         with self._lock:
@@ -376,6 +406,7 @@ def get_status() -> dict:
         "loaded_from_cache": cache.loaded_from_cache,
         "cache_file_exists": CACHE_FILE.exists(),
         "cache_file_path": str(CACHE_FILE),
+        "cache_format": "parquet",
     }
 
 
@@ -589,75 +620,28 @@ def export_excel(
     df = _get_df_or_503()
 
     output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        # 1) 시군구별 요약
-        region_summary = (
-            df.groupby("시군구명", as_index=False)
-            .agg(
-                총수입금액=("수입금액(USD)", "sum"),
-                총수입건수=("수입건수", "sum"),
-            )
-            .sort_values("총수입금액", ascending=False)
-        )
-        region_summary.to_excel(writer, sheet_name="시군구별_요약", index=False)
-
-        # 2) 금속별 요약
-        metal_summary = (
-            df.groupby("금속구분", as_index=False)
-            .agg(
-                총수입금액=("수입금액(USD)", "sum"),
-                총수입건수=("수입건수", "sum"),
-            )
-            .sort_values("총수입금액", ascending=False)
-        )
-        metal_summary.to_excel(writer, sheet_name="금속별_요약", index=False)
-
-        # 3) 시군구 × 금속 매트릭스
-        pivot = df.pivot_table(
-            index="시군구명",
-            columns="금속구분",
-            values="수입금액(USD)",
-            aggfunc="sum",
-            fill_value=0,
-        )
-        pivot.to_excel(writer, sheet_name="시군구_금속별_금액")
-
-        # 4) 원본 데이터 (전체 또는 선택 시군구)
-        target_df = df[df["시군구명"] == region_name] if region_name else df
-        if target_df.empty:
-            raise HTTPException(status_code=404, detail=f"'{region_name}' 데이터가 없습니다.")
-
-        target_df.to_excel(writer, sheet_name="원본_데이터", index=False)
-
-        # 5) 선택 시군구 전용 시트
-        if region_name:
-            breakdown = (
-                target_df.groupby("금속구분", as_index=False)
-                .agg(
-                    수입금액=("수입금액(USD)", "sum"),
-                    수입건수=("수입건수", "sum"),
-                )
-                .sort_values("수입금액", ascending=False)
-            )
-            total = breakdown["수입금액"].sum()
-            breakdown["비중(%)"] = (
-                (breakdown["수입금액"] / total * 100).round(2) if total > 0 else 0.0
-            )
-            breakdown.to_excel(
-                writer, sheet_name="선택_시군구_금속별", index=False
-            )
-
-            timeseries = (
-                target_df.groupby("연월", as_index=False)
-                .agg(
-                    수입금액=("수입금액(USD)", "sum"),
-                    수입건수=("수입건수", "sum"),
-                )
-                .sort_values("연월")
-            )
-            timeseries.to_excel(
-                writer, sheet_name="선택_시군구_추이", index=False
-            )
+    try:
+        # xlsxwriter의 constant_memory 옵션은 행을 순서대로 즉시 디스크(버퍼)에
+        # 기록하여 openpyxl 대비 대용량 시트(6만+ 행)를 훨씬 적은 메모리로 생성한다.
+        # 단, 시트별로 행을 순서대로만 써야 하며 셀을 되돌아가 수정할 수 없다.
+        with pd.ExcelWriter(
+            output,
+            engine="xlsxwriter",
+            engine_kwargs={"options": {"constant_memory": True}},
+        ) as writer:
+            _write_export_sheets(writer, df, region_name)
+    except MemoryError as exc:
+        raise HTTPException(
+            status_code=507,
+            detail=f"엑셀 생성 중 메모리가 부족합니다: {exc}",
+        ) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail=f"엑셀 생성 중 오류가 발생했습니다: {exc}",
+        ) from exc
 
     output.seek(0)
     safe_name = region_name.replace(" ", "_") if region_name else "전체"
@@ -670,6 +654,80 @@ def export_excel(
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"
         },
     )
+
+
+def _write_export_sheets(
+    writer: "pd.ExcelWriter", df: pd.DataFrame, region_name: Optional[str]
+) -> None:
+    """엑셀 워크북에 필요한 시트만 필터링하여 순서대로 기록한다."""
+    # 1) 시군구별 요약
+    region_summary = (
+        df.groupby("시군구명", as_index=False)
+        .agg(
+            총수입금액=("수입금액(USD)", "sum"),
+            총수입건수=("수입건수", "sum"),
+        )
+        .sort_values("총수입금액", ascending=False)
+    )
+    region_summary.to_excel(writer, sheet_name="시군구별_요약", index=False)
+
+    # 2) 금속별 요약
+    metal_summary = (
+        df.groupby("금속구분", as_index=False)
+        .agg(
+            총수입금액=("수입금액(USD)", "sum"),
+            총수입건수=("수입건수", "sum"),
+        )
+        .sort_values("총수입금액", ascending=False)
+    )
+    metal_summary.to_excel(writer, sheet_name="금속별_요약", index=False)
+
+    # 3) 시군구 × 금속 매트릭스
+    pivot = df.pivot_table(
+        index="시군구명",
+        columns="금속구분",
+        values="수입금액(USD)",
+        aggfunc="sum",
+        fill_value=0,
+    )
+    pivot.to_excel(writer, sheet_name="시군구_금속별_금액")
+
+    # 4) 원본 데이터 (전체 또는 선택 시군구)
+    target_df = df[df["시군구명"] == region_name] if region_name else df
+    if target_df.empty:
+        raise HTTPException(status_code=404, detail=f"'{region_name}' 데이터가 없습니다.")
+
+    target_df.to_excel(writer, sheet_name="원본_데이터", index=False)
+
+    # 5) 선택 시군구 전용 시트
+    if region_name:
+        breakdown = (
+            target_df.groupby("금속구분", as_index=False)
+            .agg(
+                수입금액=("수입금액(USD)", "sum"),
+                수입건수=("수입건수", "sum"),
+            )
+            .sort_values("수입금액", ascending=False)
+        )
+        total = breakdown["수입금액"].sum()
+        breakdown["비중(%)"] = (
+            (breakdown["수입금액"] / total * 100).round(2) if total > 0 else 0.0
+        )
+        breakdown.to_excel(
+            writer, sheet_name="선택_시군구_금속별", index=False
+        )
+
+        timeseries = (
+            target_df.groupby("연월", as_index=False)
+            .agg(
+                수입금액=("수입금액(USD)", "sum"),
+                수입건수=("수입건수", "sum"),
+            )
+            .sort_values("연월")
+        )
+        timeseries.to_excel(
+            writer, sheet_name="선택_시군구_추이", index=False
+        )
 
 
 if __name__ == "__main__":
