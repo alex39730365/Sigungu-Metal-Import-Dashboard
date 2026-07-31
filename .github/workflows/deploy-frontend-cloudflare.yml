@@ -26,9 +26,20 @@ jobs:
           cache: "npm"
           cache-dependency-path: dashboard/frontend/package-lock.json
 
+      - name: Set VITE_API_BASE_URL
+        id: api_url
+        run: |
+          API_URL="${{ secrets.VITE_API_BASE_URL }}"
+          if [ -z "$API_URL" ]; then
+            API_URL="https://sigungu-metal-dashboard-api.onrender.com"
+            echo "⚠️ VITE_API_BASE_URL secret is not set. Falling back to $API_URL"
+            echo "If your backend is at a different URL, set the VITE_API_BASE_URL GitHub secret."
+          fi
+          echo "VITE_API_BASE_URL=$API_URL" >> "$GITHUB_OUTPUT"
+
       - name: Install and build frontend
         env:
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_API_BASE_URL: ${{ steps.api_url.outputs.VITE_API_BASE_URL }}
         run: |
           cd dashboard/frontend
           npm install

@@ -10,11 +10,29 @@ const BASE_URL = `${import.meta.env.VITE_API_BASE_URL ?? ""}/api`;
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`);
-  if (!res.ok) {
+  const contentType = res.headers.get("content-type") ?? "";
+
+  if (!res.ok || contentType.includes("text/html")) {
     const detail = await res.text();
+    if (detail.trim().toLowerCase().startsWith("<!doctype") || detail.trim().startsWith("<")) {
+      throw new Error(
+        `백엔드 API 주소가 잘못되었거나 설정되지 않았습니다. ` +
+        `VITE_API_BASE_URL(${BASE_URL})를 확인하고, Cloudflare Pages나 Render 백엔드가 정상적으로 동작하는지 확인하세요.`
+      );
+    }
     throw new Error(`API 요청 실패 (${res.status}): ${detail}`);
   }
-  return res.json() as Promise<T>;
+
+  try {
+    return await (res.json() as Promise<T>);
+  } catch (err) {
+    const text = await res.text();
+    throw new Error(
+      `응답을 JSON으로 파싱할 수 없습니다. ` +
+      `백엔드가 ${BASE_URL}에서 정상적으로 동작하는지, CORS 설정을 확인하세요. ` +
+      `(원본 응답: ${text.slice(0, 100)})`
+    );
+  }
 }
 
 export function fetchRegions(): Promise<RegionSummary[]> {
