@@ -3,6 +3,9 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev:frontend": "vite",
     "dev:backend": "cd ../backend && python -m uvicorn main:app --port 8000",
