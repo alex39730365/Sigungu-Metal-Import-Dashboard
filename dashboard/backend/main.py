@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -42,7 +43,7 @@ from urllib.parse import quote
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 # 프로젝트 루트의 sigungu_metal_import_collector.py 를 import 하기 위한 경로 추가
@@ -73,6 +74,11 @@ CACHE_META_FILE = Path(__file__).resolve().parents[2] / "data_cache_meta.json"
 # 이전 버전(JSON 캐시)과의 하위 호환을 위한 경로. 존재하면 1회 마이그레이션한다.
 LEGACY_JSON_CACHE_FILE = Path(__file__).resolve().parents[2] / "data_cache.json"
 LAST_AUTO_UPDATE_FILE = Path(__file__).resolve().parents[2] / ".last_auto_update"
+
+# 엑셀 내보내기 캐시 디렉터리 (서버 임시 디렉터리 사용).
+# 데이터가 갱신되기 전까지는 동일한 요청(region_name)에 대해 이 디렉터리에
+# 저장된 파일을 그대로 재사용하여 매번 6만+ 행을 다시 생성하지 않는다.
+EXPORT_CACHE_DIR = Path(tempfile.gettempdir()) / "sigungu_metal_import_cache"
 AUTO_UPDATE_DAY_START = int(os.environ.get("METAL_AUTO_UPDATE_DAY_START", "15"))
 AUTO_UPDATE_DAY_END = int(os.environ.get("METAL_AUTO_UPDATE_DAY_END", "20"))
 AUTO_UPDATE_HOUR = int(os.environ.get("METAL_AUTO_UPDATE_HOUR", "9"))
@@ -226,6 +232,7 @@ class DataCache:
                 self.last_updated = now
                 self.loaded_from_cache = False
             self._save_cache(df, now)
+            invalidate_excel_cache()
         except Exception as exc:  # noqa: BLE001
             with self._lock:
                 self.last_error = str(exc)
@@ -608,66 +615,112 @@ def get_metal_regions(metal_category: str, limit: int = 20) -> List[MetalRegionI
     return results
 
 
-# region_name -> (생성된 xlsx bytes, 생성 시점 기준이 된 cache.last_updated)
-_excel_cache: Dict[Optional[str], "tuple[bytes, Optional[datetime]]"] = {}
 _excel_cache_lock = threading.Lock()
 
 
-def _build_excel_bytes(df: pd.DataFrame, region_name: Optional[str]) -> bytes:
-    output = BytesIO()
+def _excel_cache_path(region_name: Optional[str]) -> Path:
+    """region_name별 캐시 파일 경로를 반환한다."""
+    if region_name:
+        safe_name = "".join(
+            c if (c.isalnum() or c in ("-", "_")) else "_" for c in region_name
+        )
+        return EXPORT_CACHE_DIR / f"sigungu_metal_import_cache__{safe_name}.xlsx"
+    return EXPORT_CACHE_DIR / "sigungu_metal_import_cache.xlsx"
+
+
+def invalidate_excel_cache() -> None:
+    """원본 데이터가 갱신될 때 캐시된 엑셀 파일들을 모두 삭제한다.
+
+    파일 접근/삭제 실패는 무시한다 (캐시가 없어도 다음 요청에서 새로 생성되므로
+    서비스 동작에는 영향이 없다).
+    """
+    try:
+        if not EXPORT_CACHE_DIR.exists():
+            return
+        with _excel_cache_lock:
+            for f in EXPORT_CACHE_DIR.glob("*.xlsx"):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _build_excel_file(df: pd.DataFrame, region_name: Optional[str], dest: Path) -> None:
+    """엑셀 워크북을 생성하여 dest 경로에 저장한다.
+
+    임시 파일(.tmp)에 먼저 쓰고 성공 시에만 원자적으로 rename하여, 생성 도중
+    오류가 발생해도 손상된 파일이 캐시로 남지 않도록 한다.
+    """
+    tmp_dest = dest.with_suffix(dest.suffix + ".tmp")
     try:
         # xlsxwriter는 openpyxl보다 문자열 처리/내부 자료구조가 가벼워 메모리 사용량이
         # 적다. (constant_memory 옵션은 pandas의 열 단위 기록 방식과 호환되지 않아
         # 데이터가 유실되는 문제가 있어 사용하지 않는다.)
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        with pd.ExcelWriter(tmp_dest, engine="xlsxwriter") as writer:
             _write_export_sheets(writer, df, region_name)
+        os.replace(tmp_dest, dest)
     except MemoryError as exc:
+        _safe_remove(tmp_dest)
         raise HTTPException(
             status_code=507,
             detail=f"엑셀 생성 중 메모리가 부족합니다: {exc}",
         ) from exc
     except HTTPException:
+        _safe_remove(tmp_dest)
         raise
     except Exception as exc:  # noqa: BLE001
+        _safe_remove(tmp_dest)
         raise HTTPException(
             status_code=500,
             detail=f"엑셀 생성 중 오류가 발생했습니다: {exc}",
         ) from exc
-    return output.getvalue()
+
+
+def _safe_remove(path: Path) -> None:
+    try:
+        if path.exists():
+            os.remove(path)
+    except OSError:
+        pass
 
 
 @app.get("/api/export/excel")
 def export_excel(
     region_name: Optional[str] = Query(None, description="특정 시군구를 지정하면 해당 지역 중심의 워크북을 생성합니다.")
-) -> StreamingResponse:
+) -> FileResponse:
     """현재 데이터를 엑셀(.xlsx)로 내보냅니다.
 
     - region_name 미지정: 전체 시군구·금속 요약 + 시군구×금속 매트릭스 + 원본 데이터
     - region_name 지정: 요약 + 선택 시군구의 금속별 비중/추이 + 해당 지역 원본 데이터
 
-    데이터가 갱신되기 전까지는 동일한 region_name에 대해 생성된 워크북을
-    메모리에 캐싱하여 재사용한다 (매 요청마다 6만+ 행을 다시 쓰지 않는다).
+    서버 임시 디렉터리(EXPORT_CACHE_DIR)에 생성된 파일을 캐싱하여 재사용한다.
+    캐시 파일이 있으면 즉시 반환하고(디스크에서 스트리밍, 재생성 없음),
+    없으면(최초 요청 또는 데이터 갱신으로 캐시가 삭제된 이후) 새로 생성 후 저장한다.
     """
-    df = _get_df_or_503()
-    current_updated = cache.last_updated
+    cache_path = _excel_cache_path(region_name)
 
     with _excel_cache_lock:
-        cached = _excel_cache.get(region_name)
-        if cached is not None and cached[1] == current_updated:
-            content = cached[0]
-        else:
-            content = _build_excel_bytes(df, region_name)
-            _excel_cache[region_name] = (content, current_updated)
+        if not cache_path.exists():
+            df = _get_df_or_503()
+            try:
+                EXPORT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=500, detail=f"캐시 디렉터리 생성 실패: {exc}"
+                ) from exc
+            _build_excel_file(df, region_name, cache_path)
 
-    safe_name = region_name.replace(" ", "_") if region_name else "전체"
-    filename = f"sigungu_metal_imports_{safe_name}.xlsx"
+    filename = "sigungu_metal_import.xlsx" if not region_name else (
+        f"sigungu_metal_import_{region_name.replace(' ', '_')}.xlsx"
+    )
     encoded = quote(filename)
-    return StreamingResponse(
-        BytesIO(content),
+    return FileResponse(
+        path=cache_path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"
-        },
+        filename=filename,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"},
     )
 
 
