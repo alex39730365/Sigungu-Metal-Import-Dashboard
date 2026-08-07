@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   fetchRegionCompanies,
+  formatKoreanEok,
   RegionCompaniesResult,
   RegionCompany,
 } from "../utils/companyMapper";
@@ -82,8 +83,15 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
               className="block p-2.5 rounded-lg text-sm bg-gray-50 border border-gray-200 hover:bg-sky-50 hover:border-sky-200 hover:text-sky-700 cursor-pointer transition-colors"
               title="자세히 보려면 클릭"
             >
-              <div className="font-semibold text-gray-900">
-                {company.corp_name}
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-semibold text-gray-900">
+                  {company.corp_name}
+                </div>
+                {company.revenue && (
+                  <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-700">
+                    재무
+                  </span>
+                )}
               </div>
               <div className="text-xs text-gray-500 mt-1 leading-snug">
                 {company.adres}
@@ -98,6 +106,11 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
                 {company.fax_no ? ` · 팩스: ${company.fax_no}` : ""}
                 {company.bizr_no ? ` · 사업자: ${company.bizr_no}` : ""}
               </div>
+              {company.revenue && (
+                <div className="mt-1 text-xs font-medium text-emerald-700">
+                  매출 {formatKoreanEok(company.revenue)}
+                </div>
+              )}
               {company.hm_url && (
                 <div className="text-xs mt-1">
                   <a
