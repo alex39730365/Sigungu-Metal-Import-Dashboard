@@ -115,7 +115,6 @@ export default function MetalSearchPanel({
           <div className="flex items-center justify-between">
             <h4 className="text-gray-800 text-sm font-semibold">
               {selectedMetal} 수입 상위 시군구
-              <span className="ml-1 font-normal text-gray-400">· 단위: USD</span>
             </h4>
             {topRegion && (
               <span className="text-xs text-gray-500">

@@ -70,7 +70,6 @@ export default function MetalBreakdownPanel({ regionName }: Props) {
     <div className="w-full h-[540px] bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex flex-col">
       <h3 className="text-gray-800 text-sm font-semibold mb-2">
         {regionName} · 금속별 수입 비율
-        <span className="ml-1 font-normal text-gray-400">· 단위: USD</span>
       </h3>
 
       {loading && <p className="text-gray-500 text-sm">불러오는 중...</p>}
