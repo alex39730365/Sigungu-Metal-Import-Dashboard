@@ -89,9 +89,15 @@ app = FastAPI(title="시군구별 금속 수입 대시보드 API", version="2.0.
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 운영 환경에서는 프론트엔드 도메인으로 제한 권장
+    allow_origins=[
+        "https://sigungu-metal-import-dashboard.pages.dev",
+        "https://*.sigungu-metal-import-dashboard.pages.dev",
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # 시군구명 -> 대표 좌표 (경도, 위도). 프론트엔드 버블맵에서 사용.

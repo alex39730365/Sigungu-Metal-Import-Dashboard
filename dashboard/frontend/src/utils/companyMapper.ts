@@ -74,10 +74,13 @@ export function getDARTOverviewUrl(corpCode: string): string {
 }
 
 export async function fetchCompanySearch(
-  keyword: string
+  keyword: string,
+  signal?: AbortSignal
 ): Promise<RegionCompaniesResult> {
   const params = new URLSearchParams({ keyword: keyword.trim() });
-  const res = await fetch(`${BASE_URL}/companies/search?${params.toString()}`);
+  const res = await fetch(`${BASE_URL}/companies/search?${params.toString()}`, {
+    signal,
+  });
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`기업 검색 실패 (${res.status}): ${detail}`);

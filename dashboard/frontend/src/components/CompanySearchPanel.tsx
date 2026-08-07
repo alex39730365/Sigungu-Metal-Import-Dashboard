@@ -19,28 +19,36 @@ export default function CompanySearchPanel({ onSelectRegion }: Props) {
   const [selectedCompany, setSelectedCompany] = useState<RegionCompany | null>(null);
 
   useEffect(() => {
-    if (!searchTerm.trim()) {
+    if (!searchTerm.trim() || searchTerm.trim().length < 2) {
       setCompanies([]);
       setHasSearched(false);
       return;
     }
 
+    const controller = new AbortController();
     const timer = setTimeout(() => {
       setLoading(true);
       setError(null);
       setHasSearched(true);
-      fetchCompanySearch(searchTerm)
+      fetchCompanySearch(searchTerm, controller.signal)
         .then((result) => {
           setCompanies(result.companies);
           if (!result.indexLoaded && result.message) {
             setError(result.message);
           }
         })
-        .catch((err) => setError(err.message))
+        .catch((err) => {
+          if (err.name !== "AbortError") {
+            setError(err.message);
+          }
+        })
         .finally(() => setLoading(false));
-    }, 300);
+    }, 400);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [searchTerm]);
 
   return (
