@@ -25,8 +25,7 @@ export default function RegionBarChart({ regions, selectedRegion, onSelectRegion
   return (
     <div className="w-full h-72 bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
       <h3 className="text-gray-800 text-sm font-semibold mb-2">
-        시군구별 수입금액 순위 (상위 {data.length}개)
-        <span className="ml-1 font-normal text-gray-400">· 단위: USD</span>
+        시군구별 수입금액(USD) 순위 (상위 {data.length}개)
       </h3>
       <ResponsiveContainer width="100%" height="85%">
         <BarChart data={data} layout="vertical" margin={{ left: 8, right: 16 }}>
