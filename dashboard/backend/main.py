@@ -406,6 +406,12 @@ class RegionCompany(BaseModel):
     stock_code: str = ""
     adres: str
     induty_code: str = ""
+    induty_name: str = ""
+    ceo_nm: str = ""
+    phn_no: str = ""
+    fax_no: str = ""
+    bizr_no: str = ""
+    hm_url: str = ""
 
 
 class RegionCompaniesResponse(BaseModel):

@@ -87,12 +87,35 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
               <div className="text-xs text-gray-500 mt-1 leading-snug">
                 {company.adres}
               </div>
-              <div className="text-xs text-gray-400 mt-1">
+              <div className="text-xs text-gray-500 mt-1">
+                {company.induty_name ? company.induty_name : "업종 미확인"}
                 {company.induty_code
-                  ? `업종코드: ${company.induty_code}`
-                  : "업종코드: 미확인"}
-                {company.stock_code ? ` · 종목코드: ${company.stock_code}` : ""}
+                  ? ` (${company.induty_code})`
+                  : ""}
               </div>
+              <div className="text-xs text-gray-400 mt-1">
+                {company.ceo_nm ? `대표: ${company.ceo_nm}` : ""}
+                {company.phn_no ? ` · 전화: ${company.phn_no}` : ""}
+                {company.fax_no ? ` · 팩스: ${company.fax_no}` : ""}
+                {company.bizr_no ? ` · 사업자: ${company.bizr_no}` : ""}
+              </div>
+              {company.hm_url && (
+                <div className="text-xs mt-1">
+                  <a
+                    href={
+                      company.hm_url.startsWith("http")
+                        ? company.hm_url
+                        : `http://${company.hm_url}`
+                    }
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-sky-600 hover:underline"
+                  >
+                    홈페이지
+                  </a>
+                </div>
+              )}
             </a>
           ))}
         </div>

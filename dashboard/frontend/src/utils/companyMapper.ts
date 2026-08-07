@@ -4,6 +4,12 @@ export interface RegionCompany {
   stock_code: string;
   adres: string;
   induty_code: string;
+  induty_name?: string;
+  ceo_nm?: string;
+  phn_no?: string;
+  fax_no?: string;
+  bizr_no?: string;
+  hm_url?: string;
 }
 
 interface RegionCompanyResponse {

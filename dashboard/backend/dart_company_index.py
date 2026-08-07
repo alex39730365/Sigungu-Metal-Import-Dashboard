@@ -168,6 +168,8 @@ class DartCompanyIndex:
         self.api_key = api_key
         self.cache_dir = cache_dir or Path(__file__).resolve().parent
         self.cache_path = self.cache_dir / "dart_metal_index.json"
+        self.ksic_path = self.cache_dir / "ksic_10.json"
+        self.ksic_map = self._load_ksic()
         self.max_workers = max_workers
         self.refresh_interval = timedelta(hours=refresh_interval_hours)
         self.chunk_size = chunk_size
@@ -184,6 +186,29 @@ class DartCompanyIndex:
 
         # 서버 구동 시 파일이 있으면 즉시 로드, 없으면 비어있는 상태로 둔다.
         self._load_from_file()
+
+    def _load_ksic(self) -> Dict[str, str]:
+        """KSIC 10차 코드표(ksic_10.json)를 메모리에 로드."""
+        if not self.ksic_path.exists():
+            return {}
+        try:
+            with open(self.ksic_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning("KSIC 코드표 로드 실패: %s", e)
+            return {}
+
+    def _get_induty_name(self, code: str) -> str:
+        """업종코드에 해당하는 KSIC 한글명 반환. 정확한 코드가 없으면 상위 코드로 fallback."""
+        if not code:
+            return ""
+        c = code.strip()
+        while c:
+            name = self.ksic_map.get(c)
+            if name:
+                return name
+            c = c[:-1]
+        return ""
 
     def _load_from_file(self) -> bool:
         """dart_metal_index.json 파일을 TTL 관계없이 즉시 메모리에 로드."""
@@ -368,6 +393,12 @@ class DartCompanyIndex:
             "adres": adres,
             "sigungu": extract_sigungu(adres),
             "induty_code": induty_code,
+            "induty_name": self._get_induty_name(induty_code),
+            "ceo_nm": data.get("ceo_nm", ""),
+            "phn_no": data.get("phn_no", ""),
+            "fax_no": data.get("fax_no", ""),
+            "bizr_no": data.get("bizr_no", ""),
+            "hm_url": data.get("hm_url", ""),
         }
 
     # --------------------------------------------------------------------------
