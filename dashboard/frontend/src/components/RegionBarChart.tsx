@@ -9,6 +9,7 @@ import {
   YAxis,
 } from "recharts";
 import { RegionSummary } from "../types";
+import { formatUsd, formatUsdCompact } from "../utils/formatUsd";
 
 interface Props {
   regions: RegionSummary[];
@@ -25,12 +26,17 @@ export default function RegionBarChart({ regions, selectedRegion, onSelectRegion
     <div className="w-full h-72 bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
       <h3 className="text-gray-800 text-sm font-semibold mb-2">
         시군구별 수입금액 순위 (상위 {data.length}개)
-        <span className="ml-1 font-normal text-gray-400">· 단위: 천 USD</span>
+        <span className="ml-1 font-normal text-gray-400">· 단위: USD</span>
       </h3>
       <ResponsiveContainer width="100%" height="85%">
         <BarChart data={data} layout="vertical" margin={{ left: 8, right: 16 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis type="number" stroke="#6b7280" tick={{ fontSize: 11 }} />
+          <XAxis
+            type="number"
+            stroke="#6b7280"
+            tick={{ fontSize: 11 }}
+            tickFormatter={formatUsdCompact}
+          />
           <YAxis
             type="category"
             dataKey="region_nm"
@@ -39,7 +45,7 @@ export default function RegionBarChart({ regions, selectedRegion, onSelectRegion
             width={150}
           />
           <Tooltip
-            formatter={(value: number) => `${value.toLocaleString()} 천 USD`}
+            formatter={(value: number) => formatUsd(value)}
             contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e2e8f0" }}
             labelStyle={{ color: "#1f2937" }}
           />

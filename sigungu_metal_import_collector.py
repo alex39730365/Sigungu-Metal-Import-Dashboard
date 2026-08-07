@@ -24,8 +24,10 @@ sigungu_metal_import_collector.py
   조회하는 것은 불가능하며 시도 단위로 조회 후 결과에서 원하는 시군구명으로
   필터링해야 합니다.
 - 이 API는 수입중량(kg)을 제공하지 않습니다. 제공되는 수치는 수입건수(impCnt)와
-  수입금액(impUsdAmt, USD)뿐입니다. 따라서 본 스크립트의 Top3 분석은
+  수입금액(impUsdAmt)뿐입니다. 따라서 본 스크립트의 Top3 분석은
   요구사항의 "수입중량(kg)" 대신 "수입금액(USD)" 기준으로 수행합니다.
+- impUsdAmt/expUsdAmt는 "천 달러" 단위입니다. 본 스크립트는 USD_AMOUNT_UNIT을 곱해
+  실제 달러 금액으로 환산한 뒤 "수입금액(USD)" 컬럼에 저장합니다.
 - HsSgn은 반드시 6자리여야 합니다(4자리 입력 시 "품목코드는 6자리로 입력해야
   합니다" 오류 발생). 이에 따라 7201/7204/7208/7209/7403/7601/7502 같은 4자리
   HS Code는 WCO HS 표준의 하위 6자리 세번으로 확장하여 조회합니다.
@@ -57,6 +59,9 @@ SERVICE_KEY = "21c3a7130b45aa44a1f4c71804810b183e48a420fbb8a26721466ad626a0c6ea"
 
 # 관세청_시군구별 품목별 수출입실적 API 요청주소 (실측으로 정상 동작 확인됨)
 END_POINT = "https://apis.data.go.kr/1220000/sigunguperprlstperacrs/getSigunguPerPrlstPerAcrs"
+
+# API의 수출입금액(expUsdAmt/impUsdAmt)은 천 달러 단위이므로 실제 달러로 환산할 때 곱하는 값
+USD_AMOUNT_UNIT = 1000
 
 REQUEST_TIMEOUT = 15  # seconds
 REQUEST_INTERVAL_SEC = 0.3  # 과도한 트래픽 방지용 호출 간 대기시간
@@ -1265,7 +1270,7 @@ def normalize_items(
                 hs_cd=hs_cd,
                 item_nm=item_nm,
                 imp_cnt=imp_cnt,
-                imp_amt_usd=imp_dlr,
+                imp_amt_usd=imp_dlr * USD_AMOUNT_UNIT,
                 metal_category=metal_category,
             )
         )

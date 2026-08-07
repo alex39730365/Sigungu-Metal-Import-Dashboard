@@ -74,6 +74,8 @@ CACHE_META_FILE = Path(__file__).resolve().parents[2] / "data_cache_meta.json"
 # 이전 버전(JSON 캐시)과의 하위 호환을 위한 경로. 존재하면 1회 마이그레이션한다.
 LEGACY_JSON_CACHE_FILE = Path(__file__).resolve().parents[2] / "data_cache.json"
 LAST_AUTO_UPDATE_FILE = Path(__file__).resolve().parents[2] / ".last_auto_update"
+# 캐시 스키마 버전. v2부터 "수입금액(USD)"가 천 달러가 아닌 실제 달러 금액이다.
+CACHE_SCHEMA_VERSION = 2
 
 # 엑셀 내보내기 캐시 디렉터리 (서버 임시 디렉터리 사용).
 # 데이터가 갱신되기 전까지는 동일한 요청(region_name)에 대해 이 디렉터리에
@@ -153,6 +155,7 @@ class DataCache:
         데이터프레임(self.df)에서만 조회한다.
         """
         try:
+            meta = self._read_meta()
             if CACHE_FILE.exists():
                 df = pd.read_parquet(CACHE_FILE, engine="pyarrow")
                 last_updated = self._read_meta_timestamp() or datetime.fromtimestamp(
@@ -176,6 +179,10 @@ class DataCache:
             if df.empty:
                 return
 
+            if meta.get("schema_version", 1) < 2 and "수입금액(USD)" in df.columns:
+                df["수입금액(USD)"] = df["수입금액(USD)"] * collector.USD_AMOUNT_UNIT
+                self._save_cache(df, last_updated)
+
             with self._lock:
                 self.df = df
                 self.last_updated = last_updated
@@ -186,13 +193,19 @@ class DataCache:
                 self.last_error = f"캐시 파일 로드 실패: {exc}"
 
     @staticmethod
-    def _read_meta_timestamp() -> Optional[datetime]:
+    def _read_meta() -> Dict[str, Any]:
         if not CACHE_META_FILE.exists():
-            return None
+            return {}
         try:
             with open(CACHE_META_FILE, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-            ts = meta.get("last_updated")
+                return json.load(f)
+        except Exception:  # noqa: BLE001
+            return {}
+
+    @classmethod
+    def _read_meta_timestamp(cls) -> Optional[datetime]:
+        ts = cls._read_meta().get("last_updated")
+        try:
             return datetime.fromisoformat(ts) if ts else None
         except Exception:  # noqa: BLE001
             return None
@@ -201,7 +214,14 @@ class DataCache:
         """데이터프레임을 Parquet 파일 + 메타데이터(JSON)로 저장한다."""
         df.to_parquet(CACHE_FILE, engine="pyarrow", index=False)
         with open(CACHE_META_FILE, "w", encoding="utf-8") as f:
-            json.dump({"last_updated": last_updated.isoformat()}, f, ensure_ascii=False)
+            json.dump(
+                {
+                    "last_updated": last_updated.isoformat(),
+                    "schema_version": CACHE_SCHEMA_VERSION,
+                },
+                f,
+                ensure_ascii=False,
+            )
 
     def start_refresh(self, strt_yymm: str, end_yymm: str) -> None:
         with self._lock:

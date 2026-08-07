@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import { fetchMetalRegions, fetchMetals } from "../api/metalImports";
 import { MetalRegionItem, MetalSummary } from "../types";
+import { formatUsd, formatUsdCompact } from "../utils/formatUsd";
 
 interface Props {
   selectedRegion: string | null;
@@ -114,12 +115,12 @@ export default function MetalSearchPanel({
           <div className="flex items-center justify-between">
             <h4 className="text-gray-800 text-sm font-semibold">
               {selectedMetal} 수입 상위 시군구
-              <span className="ml-1 font-normal text-gray-400">· 단위: 천 USD</span>
+              <span className="ml-1 font-normal text-gray-400">· 단위: USD</span>
             </h4>
             {topRegion && (
               <span className="text-xs text-gray-500">
                 1위: <span className="font-medium text-gray-800">{topRegion.region_nm}</span> (
-                {topRegion.import_usd.toLocaleString()} 천 USD)
+                {formatUsd(topRegion.import_usd)})
               </span>
             )}
           </div>
@@ -133,7 +134,12 @@ export default function MetalSearchPanel({
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData} layout="vertical" margin={{ left: 24, right: 16 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis type="number" stroke="#6b7280" tick={{ fontSize: 11 }} />
+                    <XAxis
+                      type="number"
+                      stroke="#6b7280"
+                      tick={{ fontSize: 11 }}
+                      tickFormatter={formatUsdCompact}
+                    />
                     <YAxis
                       type="category"
                       dataKey="region_nm"
@@ -142,7 +148,7 @@ export default function MetalSearchPanel({
                       width={110}
                     />
                     <Tooltip
-                      formatter={(value: number) => `${value.toLocaleString()} 천 USD`}
+                      formatter={(value: number) => formatUsd(value)}
                       contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e2e8f0" }}
                       labelStyle={{ color: "#1f2937" }}
                     />
@@ -180,7 +186,7 @@ export default function MetalSearchPanel({
                   >
                     <span className="text-sm">{r.region_nm}</span>
                     <span className="text-gray-500 text-sm">
-                      {r.import_usd.toLocaleString()} 천 USD ({r.ratio_pct.toFixed(1)}%)
+                      {formatUsd(r.import_usd)} ({r.ratio_pct.toFixed(1)}%)
                     </span>
                   </li>
                 ))}
