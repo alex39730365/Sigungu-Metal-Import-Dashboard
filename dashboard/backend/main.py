@@ -412,6 +412,10 @@ class RegionCompany(BaseModel):
     fax_no: str = ""
     bizr_no: str = ""
     hm_url: str = ""
+    revenue: str = ""
+    op_profit: str = ""
+    fin_year: str = ""
+    fs_type: str = ""
 
 
 class RegionCompaniesResponse(BaseModel):

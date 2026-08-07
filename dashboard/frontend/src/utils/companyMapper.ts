@@ -10,6 +10,10 @@ export interface RegionCompany {
   fax_no?: string;
   bizr_no?: string;
   hm_url?: string;
+  revenue?: string;
+  op_profit?: string;
+  fin_year?: string;
+  fs_type?: string;
 }
 
 interface RegionCompanyResponse {
@@ -66,4 +70,12 @@ export function getDARTOverviewUrl(corpCode: string): string {
   return `https://dart.fss.or.kr/html/MDC/CFNKDagSearch/DJCorpSearch?pComCode=${encodeURIComponent(
     corpCode
   )}`;
+}
+
+export function formatKoreanEok(raw: string | number | undefined): string {
+  if (raw === undefined || raw === '') return '정보 없음';
+  const v = typeof raw === 'string' ? Number(raw.replace(/,/g, '')) : raw;
+  if (Number.isNaN(v) || v === 0) return '정보 없음';
+  const eok = Math.round(v / 1e8);
+  return eok === 0 ? '정보 없음' : `${eok.toLocaleString()}억 원`;
 }

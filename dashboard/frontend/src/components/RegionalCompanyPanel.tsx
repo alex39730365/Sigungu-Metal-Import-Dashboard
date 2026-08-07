@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import {
   fetchRegionCompanies,
-  getDARTSearchUrl,
   RegionCompaniesResult,
   RegionCompany,
 } from "../utils/companyMapper";
+import CompanyDetailModal from "./CompanyDetailModal";
 
 interface Props {
   regionName: string | null;
@@ -16,6 +16,9 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
   const [statusMessage, setStatusMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedCompany, setSelectedCompany] = useState<RegionCompany | null>(
+    null
+  );
 
   useEffect(() => {
     if (!regionName) {
@@ -73,13 +76,11 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
       {!loading && !error && companies.length > 0 && (
         <div className="space-y-2 max-h-96 overflow-y-auto">
           {companies.map((company) => (
-            <a
+            <div
               key={company.corp_code}
-              href={getDARTSearchUrl(company.corp_name)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block p-2.5 rounded-lg text-sm bg-gray-50 border border-gray-200 hover:bg-sky-50 hover:border-sky-200 hover:text-sky-700 transition-colors"
-              title={company.stock_code ? `종목코드 ${company.stock_code}` : "DART에서 기업 검색"}
+              onClick={() => setSelectedCompany(company)}
+              className="block p-2.5 rounded-lg text-sm bg-gray-50 border border-gray-200 hover:bg-sky-50 hover:border-sky-200 hover:text-sky-700 cursor-pointer transition-colors"
+              title="자세히 보려면 클릭"
             >
               <div className="font-semibold text-gray-900">
                 {company.corp_name}
@@ -89,9 +90,7 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
               </div>
               <div className="text-xs text-gray-500 mt-1">
                 {company.induty_name ? company.induty_name : "업종 미확인"}
-                {company.induty_code
-                  ? ` (${company.induty_code})`
-                  : ""}
+                {company.induty_code ? ` (${company.induty_code})` : ""}
               </div>
               <div className="text-xs text-gray-400 mt-1">
                 {company.ceo_nm ? `대표: ${company.ceo_nm}` : ""}
@@ -116,9 +115,16 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
                   </a>
                 </div>
               )}
-            </a>
+            </div>
           ))}
         </div>
+      )}
+
+      {selectedCompany && (
+        <CompanyDetailModal
+          company={selectedCompany}
+          onClose={() => setSelectedCompany(null)}
+        />
       )}
     </div>
   );
