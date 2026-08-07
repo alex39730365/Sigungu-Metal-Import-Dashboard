@@ -66,8 +66,11 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
       {error && <p className="text-red-600 text-sm">{error}</p>}
 
       {!loading && !error && companies.length === 0 && (
-        <div className="text-gray-400 text-sm space-y-1">
-          <p>매핑된 DART 기업 정보가 없습니다.</p>
+        <div className="text-gray-400 text-sm space-y-2">
+          <p>해당 시군구에 본사/등록 사업장이 매핑된 DART 금속 기업이 없습니다.</p>
+          <p className="text-amber-600 text-xs">
+            관세청 수입 데이터는 수입 신고 주소(지역) 기준이며, 기업 본사 또는 등록 사업장이 {regionName}에 있지 않으면 이 목록에 표시되지 않습니다.
+          </p>
           {statusMessage && !indexLoaded && (
             <p className="text-amber-600 text-xs">{statusMessage}</p>
           )}
