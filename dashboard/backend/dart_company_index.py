@@ -507,7 +507,13 @@ class DartCompanyIndex:
         if not keyword or not keyword.strip():
             return data
         kw = keyword.strip().lower()
-        return [c for c in data if kw in c["corp_name"].lower()]
+        return [
+            c
+            for c in data
+            if kw in c["corp_name"].lower()
+            or (c.get("induty_name") and kw in c["induty_name"].lower())
+            or (c.get("adres") and kw in c["adres"].lower())
+        ]
 
     def search_by_name(self, keyword: str, limit: int = 100) -> List[Dict[str, Any]]:
         """기업명 키워드로 내부 인덱스 검색 (외부 API 호출 없음)."""

@@ -405,6 +405,7 @@ class RegionCompany(BaseModel):
     corp_name: str
     stock_code: str = ""
     adres: str
+    sigungu: str = ""
     induty_code: str = ""
     induty_name: str = ""
     ceo_nm: str = ""
@@ -504,6 +505,23 @@ def get_region_companies(region_name: str, keyword: str = "") -> RegionCompanies
     if fallback:
         return RegionCompaniesResponse(
             companies=fallback, index_loaded=False, message="DART 인덱스 대신 캐시 파일을 사용합니다."
+        )
+
+    return RegionCompaniesResponse(
+        companies=[],
+        index_loaded=False,
+        message="DART 인덱스가 로드되지 않았습니다. build_dart_metal_index.py 를 실행하여 dart_metal_index.json 을 생성해주세요.",
+    )
+
+
+@app.get("/api/companies/search", response_model=RegionCompaniesResponse)
+def search_companies(keyword: str) -> RegionCompaniesResponse:
+    """기업명/업종/주소 키워드로 DART 기업을 검색하고, 시군구(sigungu) 정보와 함께 반환."""
+    idx = _get_dart_index()
+    if idx and idx.is_ready():
+        companies = idx.search_by_name(keyword)
+        return RegionCompaniesResponse(
+            companies=companies, index_loaded=True, message=""
         )
 
     return RegionCompaniesResponse(

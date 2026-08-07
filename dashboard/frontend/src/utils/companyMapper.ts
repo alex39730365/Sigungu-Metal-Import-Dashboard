@@ -3,6 +3,7 @@ export interface RegionCompany {
   corp_name: string;
   stock_code: string;
   adres: string;
+  sigungu: string;
   induty_code: string;
   induty_name?: string;
   ceo_nm?: string;
@@ -70,6 +71,23 @@ export function getDARTOverviewUrl(corpCode: string): string {
   return `https://dart.fss.or.kr/html/MDC/CFNKDagSearch/DJCorpSearch?pComCode=${encodeURIComponent(
     corpCode
   )}`;
+}
+
+export async function fetchCompanySearch(
+  keyword: string
+): Promise<RegionCompaniesResult> {
+  const params = new URLSearchParams({ keyword: keyword.trim() });
+  const res = await fetch(`${BASE_URL}/companies/search?${params.toString()}`);
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`기업 검색 실패 (${res.status}): ${detail}`);
+  }
+  const data: RegionCompanyResponse = await res.json();
+  return {
+    companies: data.companies,
+    indexLoaded: data.index_loaded,
+    message: data.message,
+  };
 }
 
 export function formatKoreanEok(raw: string | number | undefined): string {

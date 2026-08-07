@@ -3,6 +3,7 @@ import { downloadExcel, fetchRegions } from "./api/metalImports";
 import { RegionSummary } from "./types";
 import KoreaBubbleMap from "./components/KoreaBubbleMap";
 import RegionBarChart from "./components/RegionBarChart";
+import CompanySearchPanel from "./components/CompanySearchPanel";
 import MetalBreakdownPanel from "./components/MetalBreakdownPanel";
 import MetalSearchPanel from "./components/MetalSearchPanel";
 import RegionalCompanyPanel from "./components/RegionalCompanyPanel";
@@ -121,6 +122,7 @@ export default function App() {
           </div>
 
           <div className="flex flex-col gap-6">
+            <CompanySearchPanel onSelectRegion={setSelectedRegion} />
             <MetalSearchPanel
               selectedRegion={selectedRegion}
               onSelectRegion={setSelectedRegion}
