@@ -71,7 +71,7 @@ export default function KoreaBubbleMap({
                     strokeWidth={isSelected ? 2 : 0.75}
                   />
                   <title>
-                    {r.region_nm}: ${r.total_import_usd.toLocaleString()}
+                    {r.region_nm}: {r.total_import_usd.toLocaleString()} 천 USD
                   </title>
                 </Marker>
               );
@@ -79,7 +79,7 @@ export default function KoreaBubbleMap({
         </ComposableMap>
       </div>
       <p className="text-xs text-gray-500 mt-2 text-center">
-        버블 크기 = 수입금액(USD) 규모 · 원을 클릭하면 상세 비율을 확인할 수 있습니다.
+        버블 크기 = 수입금액 규모 (단위: 천 USD) · 원을 클릭하면 상세 비율을 확인할 수 있습니다.
       </p>
     </div>
   );

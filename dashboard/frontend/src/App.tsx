@@ -63,6 +63,9 @@ export default function App() {
           <p className="text-gray-400 text-xs mt-0.5">
             공표주기 : 1개월 · 공표시기 : 매월 15일경 수출입 신고의 정정, 취하 등 변경내역을 반영하여 전월까지의 자료를 현행화
           </p>
+          <p className="inline-flex items-center gap-1 mt-2 px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+            모든 금액 단위 : 천 USD (관세청 원자료 기준, 1 = 1,000달러)
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -131,6 +134,7 @@ export default function App() {
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-gray-800 text-sm font-semibold">
                   시군구 목록 ({filteredRegions.length}/{regions.length})
+                  <span className="ml-1 font-normal text-gray-400">· 단위: 천 USD</span>
                 </h3>
                 <input
                   value={searchTerm}
@@ -152,7 +156,7 @@ export default function App() {
                   >
                     <span>{r.region_nm}</span>
                     <span className="text-gray-500">
-                      ${r.total_import_usd.toLocaleString()}
+                      {r.total_import_usd.toLocaleString()} 천 USD
                     </span>
                   </li>
                 ))}
