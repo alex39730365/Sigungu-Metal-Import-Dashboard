@@ -38,6 +38,10 @@ export default function CompanyDetailModal({ company, onClose }: Props) {
             <dd className="text-right text-gray-900">{company.adres || '-'}</dd>
           </div>
           <div className="flex justify-between gap-2">
+            <dt className="shrink-0 text-gray-500">시군구</dt>
+            <dd className="text-right font-medium text-sky-700">{company.sigungu || '-'}</dd>
+          </div>
+          <div className="flex justify-between gap-2">
             <dt className="text-gray-500">업종</dt>
             <dd className="text-right text-gray-900">
               {company.induty_name || '-'} {company.induty_code ? `(${company.induty_code})` : ''}

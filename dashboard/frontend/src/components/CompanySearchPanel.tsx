@@ -4,6 +4,7 @@ import {
   formatKoreanEok,
   RegionCompany,
 } from "../utils/companyMapper";
+import CompanyDetailModal from "./CompanyDetailModal";
 
 interface Props {
   onSelectRegion: (regionName: string) => void;
@@ -15,6 +16,7 @@ export default function CompanySearchPanel({ onSelectRegion }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [selectedCompany, setSelectedCompany] = useState<RegionCompany | null>(null);
 
   useEffect(() => {
     if (!searchTerm.trim()) {
@@ -64,9 +66,12 @@ export default function CompanySearchPanel({ onSelectRegion }: Props) {
           {companies.map((company) => (
             <li
               key={company.corp_code}
-              onClick={() => onSelectRegion(company.sigungu || "")}
+              onClick={() => {
+                setSelectedCompany(company);
+                onSelectRegion(company.sigungu || "");
+              }}
               className="py-2.5 px-2 rounded-lg hover:bg-sky-50 cursor-pointer transition-colors"
-              title="지도/패널에서 해당 시군구를 보려면 클릭"
+              title="클릭하면 상세 정보가 표시되고 해당 시군구로 이동"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="text-sm font-semibold text-gray-900">
@@ -102,6 +107,13 @@ export default function CompanySearchPanel({ onSelectRegion }: Props) {
             </li>
           ))}
         </ul>
+      )}
+
+      {selectedCompany && (
+        <CompanyDetailModal
+          company={selectedCompany}
+          onClose={() => setSelectedCompany(null)}
+        />
       )}
     </div>
   );
