@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  cleanCompanyName,
   fetchRegionCompanies,
   getDARTSearchUrl,
   RegionCompaniesResult,
@@ -72,21 +71,28 @@ export default function RegionalCompanyPanel({ regionName }: Props) {
       )}
 
       {!loading && !error && companies.length > 0 && (
-        <div className="flex flex-wrap gap-2 max-h-60 overflow-y-auto">
+        <div className="space-y-2 max-h-96 overflow-y-auto">
           {companies.map((company) => (
             <a
               key={company.corp_code}
               href={getDARTSearchUrl(company.corp_name)}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center px-2.5 py-1 rounded-full text-xs bg-gray-50 border border-gray-200 hover:bg-sky-50 hover:border-sky-200 hover:text-sky-700 transition-colors"
-              title={`${company.adres}${
-                company.stock_code
-                  ? ` · 종목코드 ${company.stock_code}`
-                  : ""
-              }`}
+              className="block p-2.5 rounded-lg text-sm bg-gray-50 border border-gray-200 hover:bg-sky-50 hover:border-sky-200 hover:text-sky-700 transition-colors"
+              title={company.stock_code ? `종목코드 ${company.stock_code}` : "DART에서 기업 검색"}
             >
-              {cleanCompanyName(company.corp_name)}
+              <div className="font-semibold text-gray-900">
+                {company.corp_name}
+              </div>
+              <div className="text-xs text-gray-500 mt-1 leading-snug">
+                {company.adres}
+              </div>
+              <div className="text-xs text-gray-400 mt-1">
+                {company.induty_code
+                  ? `업종코드: ${company.induty_code}`
+                  : "업종코드: 미확인"}
+                {company.stock_code ? ` · 종목코드: ${company.stock_code}` : ""}
+              </div>
             </a>
           ))}
         </div>
