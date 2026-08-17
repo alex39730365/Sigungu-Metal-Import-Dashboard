@@ -1185,6 +1185,8 @@ class ImportRecord:
     imp_cnt: int
     imp_amt_usd: float
     metal_category: str
+    exp_cnt: int = 0
+    exp_amt_usd: float = 0.0
 
 
 def fetch_import_data(
@@ -1248,6 +1250,8 @@ def normalize_items(
 
         imp_cnt_raw = _first_present(raw, RESPONSE_FIELD_CANDIDATES["imp_cnt"])
         imp_dlr_raw = _first_present(raw, RESPONSE_FIELD_CANDIDATES["imp_dlr"])
+        exp_cnt_raw = _first_present(raw, RESPONSE_FIELD_CANDIDATES["exp_cnt"])
+        exp_dlr_raw = _first_present(raw, RESPONSE_FIELD_CANDIDATES["exp_dlr"])
 
         try:
             imp_cnt = int(float(imp_cnt_raw)) if imp_cnt_raw not in (None, "") else 0
@@ -1259,6 +1263,16 @@ def normalize_items(
             )
         except ValueError:
             imp_dlr = 0.0
+        try:
+            exp_cnt = int(float(exp_cnt_raw)) if exp_cnt_raw not in (None, "") else 0
+        except ValueError:
+            exp_cnt = 0
+        try:
+            exp_dlr = (
+                float(exp_dlr_raw.replace(",", "")) if exp_dlr_raw not in (None, "") else 0.0
+            )
+        except ValueError:
+            exp_dlr = 0.0
 
         metal_category = HS6_CODE_METAL_MAP.get(fallback_hs6_code, "기타")
 
@@ -1272,6 +1286,8 @@ def normalize_items(
                 imp_cnt=imp_cnt,
                 imp_amt_usd=imp_dlr * USD_AMOUNT_UNIT,
                 metal_category=metal_category,
+                exp_cnt=exp_cnt,
+                exp_amt_usd=exp_dlr * USD_AMOUNT_UNIT,
             )
         )
 
@@ -1341,6 +1357,8 @@ def _records_to_df(records: List["ImportRecord"]) -> pd.DataFrame:
         "금속구분",
         "수입건수",
         "수입금액(USD)",
+        "수출건수",
+        "수출금액(USD)",
     ]
     if not records:
         return pd.DataFrame(columns=columns)
@@ -1355,6 +1373,8 @@ def _records_to_df(records: List["ImportRecord"]) -> pd.DataFrame:
                 "금속구분": r.metal_category,
                 "수입건수": r.imp_cnt,
                 "수입금액(USD)": r.imp_amt_usd,
+                "수출건수": r.exp_cnt,
+                "수출금액(USD)": r.exp_amt_usd,
             }
             for r in records
         ]

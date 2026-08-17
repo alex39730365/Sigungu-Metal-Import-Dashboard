@@ -29,6 +29,7 @@ uvicorn main:app --reload --port 8000
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -51,6 +52,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import sigungu_metal_import_collector as collector  # noqa: E402
 from dart_company_index import DartCompanyIndex, create_dart_index  # noqa: E402
+from monthly_stats import query_monthly_stats, sync_monthly_stats_to_d1  # noqa: E402
+from d1_client import D1ConfigError  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 _dart_index: Optional[DartCompanyIndex] = None
 
@@ -259,6 +264,13 @@ class DataCache:
                 self.loaded_from_cache = False
             self._save_cache(df, now)
             invalidate_excel_cache()
+            try:
+                sync_result = sync_monthly_stats_to_d1(df)
+                if sync_result.get("status") == "error":
+                    logger.warning("D1 월단위 통계 동기화 실패: %s", sync_result.get("reason"))
+            except Exception as d1_exc:  # noqa: BLE001
+                # D1 동기화 실패가 전체 데이터 갱신을 실패시키지 않도록 격리한다.
+                logger.warning("D1 월단위 통계 동기화 중 예외 발생: %s", d1_exc)
         except Exception as exc:  # noqa: BLE001
             with self._lock:
                 self.last_error = str(exc)
@@ -452,6 +464,33 @@ def get_status() -> dict:
         "cache_file_path": str(CACHE_FILE),
         "cache_format": "parquet",
     }
+
+
+@app.get("/api/monthly-stats")
+def get_monthly_stats(
+    year_month: Optional[str] = Query(None, description="'YYYY-MM' 형식. 미지정 시 전체 연월 대상."),
+    region_name: Optional[str] = Query(None, description="시군구명 (예: '경상북도 포항시'). D1의 sigungu_code 컬럼과 매칭."),
+    metal_code: Optional[str] = Query(None, description="금속구분 (예: '철강', '구리')."),
+    limit: int = Query(5000, ge=1, le=20000),
+) -> Dict[str, Any]:
+    """Cloudflare D1의 monthly_metal_stats 테이블에서 월단위 집계 스냅샷을 조회한다.
+
+    year_month + region_name을 함께 지정하면 idx_year_month_sigungu 인덱스를
+    타서 빠르게 조회된다. D1이 설정되지 않은 환경에서는 503을 반환한다.
+    """
+    try:
+        rows = query_monthly_stats(
+            year_month=year_month,
+            sigungu_code=region_name,
+            metal_code=metal_code,
+            limit=limit,
+        )
+    except D1ConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"D1 조회 실패: {exc}") from exc
+
+    return {"count": len(rows), "items": rows}
 
 
 @app.post("/api/refresh")

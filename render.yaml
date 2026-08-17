@@ -11,3 +11,10 @@ services:
         value: "202401"
       - key: METAL_END_YYMM
         value: "202412"
+      # Cloudflare D1 월단위 통계 동기화용 (미설정 시 D1 동기화만 건너뛰고 서비스는 정상 동작)
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_D1_DATABASE_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
