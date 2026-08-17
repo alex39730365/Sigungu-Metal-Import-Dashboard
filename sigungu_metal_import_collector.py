@@ -1466,8 +1466,6 @@ def _fetch_target(idx: int, total_calls: int, target: tuple, output_path: str) -
             exc,
         )
         records = []
-    finally:
-        time.sleep(REQUEST_INTERVAL_SEC)
 
     return idx, records
 
