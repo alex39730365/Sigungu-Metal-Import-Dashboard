@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -64,7 +65,9 @@ END_POINT = "https://apis.data.go.kr/1220000/sigunguperprlstperacrs/getSigunguPe
 USD_AMOUNT_UNIT = 1000
 
 REQUEST_TIMEOUT = 15  # seconds
-REQUEST_INTERVAL_SEC = 0.3  # 과도한 트래픽 방지용 호출 간 대기시간
+# 이 API는 초당 호출 횟수가 엄격하게 제한되어 있어, 워커(쓰리딜)별로 개별 sleep을 둔는 대신
+# 모든 워커가 같이 준수하는 전역(global) 최소 호출 간격을 강제한다 (_throttle 함수 참조).
+GLOBAL_MIN_INTERVAL_SEC = float(os.environ.get("METAL_API_MIN_INTERVAL_SEC", "1.0"))
 NUM_OF_ROWS = 500
 
 # ------------------------------------------------------------------------------
@@ -1084,10 +1087,11 @@ logger = logging.getLogger(__name__)
 def _build_session() -> requests.Session:
     session = requests.Session()
     retries = Retry(
-        total=3,
-        backoff_factor=0.5,
+        total=5,
+        backoff_factor=2.0,
         status_forcelist=[429, 500, 502, 503, 504],
         allowed_methods=frozenset(["GET"]),
+        respect_retry_after_header=True,
     )
     session.mount("http://", HTTPAdapter(max_retries=retries))
     session.mount("https://", HTTPAdapter(max_retries=retries))
@@ -1103,6 +1107,25 @@ def _get_thread_session() -> requests.Session:
     if not getattr(_THREAD_LOCAL, "session", None):
         _THREAD_LOCAL.session = _build_session()
     return _THREAD_LOCAL.session
+
+
+# 여러 워커 스레드가 함께 지키는 전역 레이트 리밋을 위한 락(lock)과 마지막 요청 시각
+_RATE_LIMIT_LOCK = threading.Lock()
+_last_request_ts = 0.0
+
+
+def _throttle() -> None:
+    """모든 워커 스레드가 공유하는 전역 기준으로, 적어도 GLOBAL_MIN_INTERVAL_SEC만큼의
+    간격을 둔 다음에 실제 HTTP 요청을 보낸다. ThreadPoolExecutor의 병렬 워커 수와
+    무관하게 실제 관세청 API 호출 속도가 이 간격을 넘지 않도록 강제하여 429(Too Many
+    Requests) 폭주를 원천적으로 방지한다."""
+    global _last_request_ts
+    with _RATE_LIMIT_LOCK:
+        now = time.monotonic()
+        wait = GLOBAL_MIN_INTERVAL_SEC - (now - _last_request_ts)
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_ts = time.monotonic()
 
 
 # ------------------------------------------------------------------------------
@@ -1211,6 +1234,7 @@ def fetch_import_data(
     }
 
     sess = session or SESSION
+    _throttle()
     try:
         resp = sess.get(END_POINT, params=params, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
