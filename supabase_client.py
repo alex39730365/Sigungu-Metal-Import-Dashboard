@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import urllib.parse
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
@@ -68,9 +69,36 @@ def _make_target_key(
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _ensure_ssl_require(dsn: str) -> str:
+    """Supabase 연결에 sslmode=require 가 없으면 추가하고,
+    비밀번호에 포함된 특수문자를 URL 인코딩한다."""
+    if not dsn:
+        return dsn
+    parsed = urllib.parse.urlparse(dsn)
+
+    # 비밀번호가 있으면 re-encode (이미 인코딩된 경우 decode 후 다시 encode)
+    netloc = parsed.netloc
+    if parsed.password is not None:
+        raw_password = urllib.parse.unquote(parsed.password)
+        encoded_password = urllib.parse.quote(raw_password, safe="")
+        user = parsed.username or ""
+        host = parsed.hostname or ""
+        port = parsed.port
+        host_with_port = f"{host}:{port}" if port else host
+        netloc = f"{user}:{encoded_password}@{host_with_port}"
+
+    query = urllib.parse.parse_qs(parsed.query)
+    if "sslmode" not in query:
+        query["sslmode"] = ["require"]
+    new_query = urllib.parse.urlencode(query, doseq=True)
+    return urllib.parse.urlunparse(parsed._replace(netloc=netloc, query=new_query))
+
+
 class SupabaseClient:
     def __init__(self, dsn: Optional[str] = None) -> None:
-        self.dsn = dsn or os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
+        self.dsn = _ensure_ssl_require(
+            dsn or os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL") or ""
+        )
 
     def is_configured(self) -> bool:
         return bool(self.dsn)
