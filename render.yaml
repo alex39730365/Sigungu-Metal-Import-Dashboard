@@ -11,6 +11,10 @@ services:
         value: "202401"
       - key: METAL_END_YYMM
         value: "202412"
+      # Supabase PostgreSQL 연결 문자열 (Render Dashboard 에서 secret 으로 관리)
+      # 예시: postgresql://postgres.<project>:<PASSWORD>@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?sslmode=require
+      - key: DATABASE_URL
+        sync: false
       # Cloudflare D1 월단위 통계 동기화용 (미설정 시 D1 동기화만 건너뛰고 서비스는 정상 동작)
       - key: CLOUDFLARE_ACCOUNT_ID
         sync: false
