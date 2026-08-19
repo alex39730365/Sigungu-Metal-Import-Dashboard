@@ -26,3 +26,5 @@ collector_run.log
 server.log
 metals.json
 metal_regions.json
+data_cache.parquet
+data_cache_meta.json

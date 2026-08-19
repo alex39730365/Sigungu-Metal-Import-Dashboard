@@ -54,8 +54,11 @@ import sigungu_metal_import_collector as collector  # noqa: E402
 from dart_company_index import DartCompanyIndex, create_dart_index  # noqa: E402
 from monthly_stats import query_monthly_stats, sync_monthly_stats_to_d1  # noqa: E402
 from d1_client import D1ConfigError  # noqa: E402
+from supabase_client import get_supabase_client  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+supabase_client = get_supabase_client()
 
 _dart_index: Optional[DartCompanyIndex] = None
 
@@ -160,12 +163,23 @@ class DataCache:
         self._load_cache()
 
     def _load_cache(self) -> None:
-        """로컬 Parquet 캐시 파일이 있으면 메모리에 1회 로드한다.
+        """Supabase가 설정되어 있으면 DB에서, 그렇지 않으면 로컬 Parquet에서 캐시를 1회 로드한다.
 
         이후 모든 API 엔드포인트는 디스크를 다시 읽지 않고 이 메모리
         데이터프레임(self.df)에서만 조회한다.
         """
         try:
+            if supabase_client.is_configured():
+                df = supabase_client.load_raw_records()
+                last_updated = supabase_client.get_last_progress_updated()
+                if not df.empty:
+                    with self._lock:
+                        self.df = df
+                        self.last_updated = last_updated
+                        self.loaded_from_cache = True
+                        self.last_error = None
+                    return
+
             meta = self._read_meta()
             if CACHE_FILE.exists():
                 df = pd.read_parquet(CACHE_FILE, engine="pyarrow")
@@ -201,7 +215,7 @@ class DataCache:
                 self.last_error = None
         except Exception as exc:  # noqa: BLE001
             with self._lock:
-                self.last_error = f"캐시 파일 로드 실패: {exc}"
+                self.last_error = f"캐시 로드 실패: {exc}"
 
     @staticmethod
     def _read_meta() -> Dict[str, Any]:
@@ -222,7 +236,13 @@ class DataCache:
             return None
 
     def _save_cache(self, df: pd.DataFrame, last_updated: datetime) -> None:
-        """데이터프레임을 Parquet 파일 + 메타데이터(JSON)로 저장한다."""
+        """데이터프레임을 Parquet 파일 + 메타데이터(JSON)로 저장한다.
+
+        Supabase가 설정된 경우에는 DB가 영구 저장소이므로 로컬 Parquet 쓰기를 생략한다.
+        """
+        if supabase_client.is_configured():
+            return
+
         df.to_parquet(CACHE_FILE, engine="pyarrow", index=False)
         with open(CACHE_META_FILE, "w", encoding="utf-8") as f:
             json.dump(

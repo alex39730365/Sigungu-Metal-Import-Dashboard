@@ -51,6 +51,8 @@ import pandas as pd
 import requests
 from requests.adapters import HTTPAdapter, Retry
 
+from supabase_client import get_supabase_client, SupabaseClient
+
 # ------------------------------------------------------------------------------
 # 1. 설정(CONFIG)
 # ------------------------------------------------------------------------------
@@ -1350,12 +1352,25 @@ def _split_yymm_ranges(strt_yymm: str, end_yymm: str) -> List[tuple]:
 BASE_DIR = Path(__file__).resolve().parent
 PROGRESS_PATH = BASE_DIR / "sigungu_metal_imports_progress.json"
 OUTPUT_PATH = BASE_DIR / "sigungu_metal_imports.csv"
-CHECKPOINT_EVERY = 100  # 이 개수만큼 호출할 때마다 CSV+진행률을 중간 저장
+CHECKPOINT_EVERY = 100  # 이 개수만큼 호출할 때마다 DB+진행률을 중간 저장
+
+# Supabase PostgreSQL 클라이언트 (Render 재시작/슬립 후에도 데이터/체크포인트 보존)
+supabase_client = get_supabase_client()
 MAX_WORKERS = 6  # 병렬 API 호출 수 (API 부하/차단 주의)
 
 
 def _load_progress() -> int:
-    """이전에 완료된 target 인덱스(0-based, 없으면 0)를 반환."""
+    """이전에 완료된 target 인덱스(0-based, 없으면 0)를 반환.
+
+    Supabase가 설정되어 있으면 DB의 collection_progress 테이블에서,
+    그렇지 않으면 로컬 JSON 파일에서 읽어온다.
+    """
+    if supabase_client.is_configured():
+        try:
+            return supabase_client.load_progress()
+        except Exception:  # noqa: BLE001
+            logger.exception("Supabase progress 로드 실패, 로컬 JSON fallback")
+
     if Path(PROGRESS_PATH).exists():
         try:
             with open(PROGRESS_PATH, "r", encoding="utf-8") as f:
@@ -1367,6 +1382,13 @@ def _load_progress() -> int:
 
 
 def _save_progress(completed_index: int) -> None:
+    if supabase_client.is_configured():
+        try:
+            supabase_client.save_progress(completed_index)
+        except Exception:  # noqa: BLE001
+            logger.exception("Supabase progress 저장 실패")
+        return
+
     with open(PROGRESS_PATH, "w", encoding="utf-8") as f:
         json.dump({"completed_index": completed_index}, f, ensure_ascii=False)
 
@@ -1405,13 +1427,8 @@ def _records_to_df(records: List["ImportRecord"]) -> pd.DataFrame:
     )
 
 
-def _append_and_save_csv(output_path: str, new_records: List["ImportRecord"], sigungu_keywords: Optional[List[str]]) -> None:
-    """새 레코드를 기존 CSV에 병합하고 중복 제거 후 저장."""
-    new_df = _records_to_df(new_records)
-    if sigungu_keywords:
-        pattern = "|".join(re.escape(k) for k in sigungu_keywords)
-        new_df = new_df[new_df["시군구명"].str.contains(pattern, regex=True, na=False)].reset_index(drop=True)
-
+def _save_csv_fallback(output_path: str, new_df: pd.DataFrame) -> None:
+    """DB 미설정 시 CSV에 병합/중복 제거 후 저장."""
     if Path(output_path).exists():
         try:
             existing_df = pd.read_csv(output_path, encoding="utf-8-sig")
@@ -1428,7 +1445,31 @@ def _append_and_save_csv(output_path: str, new_records: List["ImportRecord"], si
     combined.to_csv(output_path, index=False, encoding="utf-8-sig")
 
 
-def _fetch_target(idx: int, total_calls: int, target: tuple, output_path: str) -> tuple:
+def _append_and_save_records(
+    new_records: List["ImportRecord"],
+    sigungu_keywords: Optional[List[str]],
+    output_path: str = str(OUTPUT_PATH),
+) -> None:
+    """필터링 후 Supabase DB에 즉시 upsert. DB 미설정 시 CSV로 fallback."""
+    if sigungu_keywords:
+        pattern = re.compile("|".join(re.escape(k) for k in sigungu_keywords))
+        new_records = [r for r in new_records if pattern.search(r.region_nm or "")]
+
+    if not new_records:
+        return
+
+    if supabase_client.is_configured():
+        try:
+            supabase_client.upsert_raw_records(new_records)
+        except Exception:  # noqa: BLE001
+            logger.exception("Supabase raw_records upsert 실패")
+            raise
+    else:
+        new_df = _records_to_df(new_records)
+        _save_csv_fallback(output_path, new_df)
+
+
+def _fetch_target(idx: int, total_calls: int, target: tuple) -> tuple:
     """단일 target에 대해 API 호출/정규화를 수행. (병렬 worker용)"""
     range_strt, range_end, hs6_code, sido_cd, sido_nm = target
     logger.info(
@@ -1481,7 +1522,7 @@ def collect_all_import_data(
 ) -> pd.DataFrame:
     """대상 조회기간 x HS코드(6자리) x 시도 전체 조합에 대해 수입 데이터를 수집하고,
     필요 시 관심 시군구 키워드로 결과를 필터링한다.
-    CHECKPOINT_EVERY 호출마다 중간 결과를 CSV에 저장하고 진행률을 기록해,
+    CHECKPOINT_EVERY 호출마다 중간 결과를 Supabase DB에 upsert하고 진행률을 기록해,
     중단 후 재실행하면 마지막 체크포인트부터 자동으로 이어서 진행된다.
     병렬 처리를 위해 ThreadPoolExecutor를 사용한다."""
     hs6_codes = hs6_codes or TARGET_HS6_CODES
@@ -1503,6 +1544,12 @@ def collect_all_import_data(
         logger.info("체크포인트 발견: %d번째부터 이어서 진행합니다.", start_index + 1)
     if start_index >= total_calls:
         logger.info("모든 항목이 이미 수집 완료되었습니다.")
+        if supabase_client.is_configured():
+            try:
+                return supabase_client.load_raw_records()
+            except Exception:  # noqa: BLE001
+                logger.exception("Supabase 데이터 로드 실패")
+                return pd.DataFrame()
         if Path(output_path).exists():
             try:
                 return pd.read_csv(output_path, encoding="utf-8-sig")
@@ -1522,7 +1569,7 @@ def collect_all_import_data(
                     idx, target = next(pending_iter)
                 except StopIteration:
                     break
-                future = executor.submit(_fetch_target, idx, total_calls, target, output_path)
+                future = executor.submit(_fetch_target, idx, total_calls, target)
                 chunk.append((idx, target, future))
 
             if not chunk:
@@ -1547,9 +1594,16 @@ def collect_all_import_data(
                     )
 
             if pending_records:
-                _append_and_save_csv(output_path, pending_records, sigungu_keywords)
+                _append_and_save_records(pending_records, sigungu_keywords, output_path)
             _save_progress(chunk_max_idx)
-            logger.info("체크포인트 저장: %d/%d 까지 완료, CSV 중간 저장됨", chunk_max_idx, total_calls)
+            logger.info("체크포인트 저장: %d/%d 까지 완료, DB 중간 저장됨", chunk_max_idx, total_calls)
+
+    if supabase_client.is_configured():
+        try:
+            return supabase_client.load_raw_records()
+        except Exception:  # noqa: BLE001
+            logger.exception("Supabase 최종 데이터 로드 실패")
+            return pd.DataFrame()
 
     if Path(output_path).exists():
         try:
@@ -1606,10 +1660,11 @@ def main() -> None:
     end_yymm = "202412"
 
     logger.info("데이터 수집을 시작합니다... (%s ~ %s)", strt_yymm, end_yymm)
-    # collect_all_import_data 가 체크포인트 기반으로 CSV를 직접 누적 저장하며,
+    # collect_all_import_data 가 체크포인트 기반으로 Supabase DB에 직접 누적 저장하며,
     # 중단 후 재실행 시 마지막 체크포인트부터 자동으로 이어서 진행한다.
     df = collect_all_import_data(strt_yymm=strt_yymm, end_yymm=end_yymm)
-    logger.info("원본 데이터를 %s 에 저장했습니다. (행 수: %d)", str(OUTPUT_PATH), len(df))
+    storage = "Supabase DB" if supabase_client.is_configured() else str(OUTPUT_PATH)
+    logger.info("원본 데이터를 %s 에 저장했습니다. (행 수: %d)", storage, len(df))
 
     top3_df = analyze_top3_metals_by_sigungu(df, value_col="수입금액(USD)")
     top3_output_path = "sigungu_metal_imports_top3.csv"
