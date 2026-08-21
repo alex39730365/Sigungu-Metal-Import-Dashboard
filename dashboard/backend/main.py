@@ -168,6 +168,10 @@ class DataCache:
         self.last_updated: Optional[datetime] = None
         self.last_error: Optional[str] = None
         self.loaded_from_cache: bool = False
+        # 데이터 소스 진단 정보 (모니터링/디버깅용, /api/status 에서 노출)
+        self.data_source: Optional[str] = None
+        self.local_metal_count: int = 0
+        self.supabase_metal_count: int = 0
         self._lock = threading.Lock()
         self._load_cache()
 
@@ -240,6 +244,16 @@ class DataCache:
                 if not supabase_df.empty and "금속구분" in supabase_df.columns
                 else 0
             )
+            self.local_metal_count = local_metal_count
+            self.supabase_metal_count = supabase_metal_count
+
+            if supabase_client.is_configured() and local_metal_count != supabase_metal_count:
+                logger.warning(
+                    "[DataCache] 데이터 불일치 감지: 로컬 %s개 금속 vs Supabase %s개 금속. "
+                    "더 완전한 쪽을 사용하고, 로컬이 더 완전하면 Supabase에 자동 동기화합니다.",
+                    local_metal_count,
+                    supabase_metal_count,
+                )
 
             if supabase_metal_count >= local_metal_count and supabase_metal_count > 0:
                 logger.info(
@@ -248,6 +262,7 @@ class DataCache:
                     local_metal_count,
                 )
                 df, last_updated = supabase_df, supabase_updated
+                self.data_source = "supabase"
             elif local_metal_count > 0:
                 logger.info(
                     "[DataCache] 로컬 캐시 사용 (%s개 금속) > Supabase (%s개 금속)",
@@ -255,6 +270,9 @@ class DataCache:
                     supabase_metal_count,
                 )
                 df, last_updated = local_df, local_updated
+                self.data_source = "local"
+                if supabase_client.is_configured() and local_metal_count > supabase_metal_count:
+                    self._sync_local_to_supabase(local_df)
             else:
                 logger.info("[DataCache] 사용 가능한 캐시가 없어 API 수집을 시작합니다.")
                 return
@@ -270,6 +288,39 @@ class DataCache:
         except Exception as exc:  # noqa: BLE001
             with self._lock:
                 self.last_error = f"캐시 로드 실패: {exc}"
+
+    def _sync_local_to_supabase(self, df: pd.DataFrame) -> None:
+        """로컬 캐시가 Supabase보다 더 완전할 때, 로컬 데이터를 Supabase에 백그라운드로
+        upsert하여 두 저장소를 일치시킨다. 다음 배포/재시작부터는 Supabase도
+        동일하게 최신 데이터를 갖게 되어 이번과 같은 불일치가 재발하지 않는다."""
+
+        def _run() -> None:
+            try:
+                from types import SimpleNamespace
+
+                has_exp_cnt = "수출건수" in df.columns
+                has_exp_amt = "수출금액(USD)" in df.columns
+                records = [
+                    SimpleNamespace(
+                        year_month=row["연월"],
+                        sido_cd=str(row["시도코드"]),
+                        region_nm=row["시군구명"],
+                        hs_cd=str(row["HS코드"]),
+                        item_nm=row["품목명"],
+                        metal_category=row["금속구분"],
+                        imp_cnt=int(row["수입건수"]),
+                        imp_amt_usd=float(row["수입금액(USD)"]),
+                        exp_cnt=int(row["수출건수"]) if has_exp_cnt else 0,
+                        exp_amt_usd=float(row["수출금액(USD)"]) if has_exp_amt else 0.0,
+                    )
+                    for row in df.to_dict("records")
+                ]
+                count = supabase_client.upsert_raw_records(records)
+                logger.info("[DataCache] 로컬 -> Supabase 자동 동기화 완료 (%s건)", count)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[DataCache] 로컬 -> Supabase 자동 동기화 실패: %s", exc)
+
+        threading.Thread(target=_run, daemon=True).start()
 
     @staticmethod
     def _read_meta() -> Dict[str, Any]:
@@ -455,9 +506,13 @@ def on_startup() -> None:
     else:
         metal_count = cache.df["금속구분"].nunique()
         logger.info(
-            "[startup] DataCache: %s 행, %s 개 금속, loaded_from_cache=%s, last_updated=%s",
+            "[startup] DataCache: %s 행, %s 개 금속 (source=%s, local=%s, supabase=%s), "
+            "loaded_from_cache=%s, last_updated=%s",
             len(cache.df),
             metal_count,
+            cache.data_source,
+            cache.local_metal_count,
+            cache.supabase_metal_count,
             cache.loaded_from_cache,
             cache.last_updated,
         )
@@ -557,6 +612,10 @@ def get_status() -> dict:
         "cache_file_exists": CACHE_FILE.exists(),
         "cache_file_path": str(CACHE_FILE),
         "cache_format": "parquet",
+        "data_source": cache.data_source,
+        "local_metal_count": cache.local_metal_count,
+        "supabase_metal_count": cache.supabase_metal_count,
+        "metal_count": cache.df["금속구분"].nunique() if not cache.df.empty and "금속구분" in cache.df.columns else 0,
     }
 
 
