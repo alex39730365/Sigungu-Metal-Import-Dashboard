@@ -56,6 +56,10 @@ from monthly_stats import query_monthly_stats, sync_monthly_stats_to_d1  # noqa:
 from d1_client import D1ConfigError  # noqa: E402
 from supabase_client import get_supabase_client  # noqa: E402
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 supabase_client = get_supabase_client()
@@ -401,9 +405,31 @@ def on_startup() -> None:
     if cache.df.empty:
         cache.start_refresh(DEFAULT_STRT_YYMM, DEFAULT_END_YYMM)
     # DART 금속 기업 인덱스는 사전 빌드된 JSON 파일에서 로드 (백그라운드 크롤링 금지)
-    _get_dart_index()
+    dart_idx = _get_dart_index()
     # 월 1회(15~20일) 자동 업데이트 스케줄러 실행
     threading.Thread(target=_monthly_update_scheduler, daemon=True).start()
+
+    # Render/로컬 로그에서 즉시 확인할 수 있도록 상태 출력
+    if cache.df.empty:
+        logger.info("[startup] DataCache: 비어 있음 (백그라운드 수집 시작)")
+    else:
+        metal_count = cache.df["금속구분"].nunique()
+        logger.info(
+            "[startup] DataCache: %s 행, %s 개 금속, loaded_from_cache=%s, last_updated=%s",
+            len(cache.df),
+            metal_count,
+            cache.loaded_from_cache,
+            cache.last_updated,
+        )
+
+    if dart_idx:
+        logger.info(
+            "[startup] DART index: %s 건, ready=%s",
+            len(dart_idx.companies),
+            dart_idx.is_ready(),
+        )
+    else:
+        logger.info("[startup] DART index: API 키/파일 없음")
 
 
 # ------------------------------------------------------------------------------
