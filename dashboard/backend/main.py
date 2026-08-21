@@ -81,8 +81,8 @@ DEFAULT_STRT_YYMM = os.environ.get("METAL_STRT_YYMM", "202401")
 DEFAULT_END_YYMM = os.environ.get("METAL_END_YYMM", "202412")
 # 데이터 캐시는 Parquet(바이너리 컬럼형 포맷)으로 저장한다.
 # JSON 대비 파일 크기와 로드 시 메모리 사용량이 훨씬 작고 파싱 속도도 빠르다.
-CACHE_FILE = Path(__file__).resolve().parents[2] / "data_cache.parquet"
-CACHE_META_FILE = Path(__file__).resolve().parents[2] / "data_cache_meta.json"
+CACHE_FILE = Path(__file__).resolve().parents[2] / "sigungu_metal_import_cache.parquet"
+CACHE_META_FILE = Path(__file__).resolve().parents[2] / "sigungu_metal_import_cache_meta.json"
 CSV_DATA_FILE = Path(__file__).resolve().parents[2] / "sigungu_metal_imports.csv"
 # 이전 버전(JSON 캐시)과의 하위 호환을 위한 경로. 존재하면 1회 마이그레이션한다.
 LEGACY_JSON_CACHE_FILE = Path(__file__).resolve().parents[2] / "data_cache.json"
