@@ -79,6 +79,7 @@ DEFAULT_END_YYMM = os.environ.get("METAL_END_YYMM", "202412")
 # JSON 대비 파일 크기와 로드 시 메모리 사용량이 훨씬 작고 파싱 속도도 빠르다.
 CACHE_FILE = Path(__file__).resolve().parents[2] / "data_cache.parquet"
 CACHE_META_FILE = Path(__file__).resolve().parents[2] / "data_cache_meta.json"
+CSV_DATA_FILE = Path(__file__).resolve().parents[2] / "sigungu_metal_imports.csv"
 # 이전 버전(JSON 캐시)과의 하위 호환을 위한 경로. 존재하면 1회 마이그레이션한다.
 LEGACY_JSON_CACHE_FILE = Path(__file__).resolve().parents[2] / "data_cache.json"
 LAST_AUTO_UPDATE_FILE = Path(__file__).resolve().parents[2] / ".last_auto_update"
@@ -196,6 +197,13 @@ class DataCache:
                     if payload.get("last_updated")
                     else datetime.fromtimestamp(LEGACY_JSON_CACHE_FILE.stat().st_mtime)
                 )
+                if not df.empty:
+                    self._save_cache(df, last_updated)
+            elif CSV_DATA_FILE.exists():
+                # CSV 원본 데이터가 있다면 즉시 로드해서 Parquet 캐시로 저장한다.
+                df = pd.read_csv(CSV_DATA_FILE)
+                last_updated = datetime.fromtimestamp(CSV_DATA_FILE.stat().st_mtime)
+                meta = {"schema_version": CACHE_SCHEMA_VERSION}
                 if not df.empty:
                     self._save_cache(df, last_updated)
             else:
