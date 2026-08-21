@@ -81,11 +81,15 @@ DEFAULT_STRT_YYMM = os.environ.get("METAL_STRT_YYMM", "202401")
 DEFAULT_END_YYMM = os.environ.get("METAL_END_YYMM", "202412")
 # 데이터 캐시는 Parquet(바이너리 컬럼형 포맷)으로 저장한다.
 # JSON 대비 파일 크기와 로드 시 메모리 사용량이 훨씬 작고 파싱 속도도 빠르다.
-CACHE_FILE = Path(__file__).resolve().parents[2] / "sigungu_metal_import_cache.parquet"
-CACHE_META_FILE = Path(__file__).resolve().parents[2] / "sigungu_metal_import_cache_meta.json"
+# Render rootDir = dashboard/backend 이므로 캐시는 dashboard/backend/data 에 둬야
+# 배포에 안정적으로 포함된다.
+DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR.mkdir(exist_ok=True)
+CACHE_FILE = DATA_DIR / "sigungu_metal_import_cache.parquet"
+CACHE_META_FILE = DATA_DIR / "sigungu_metal_import_cache_meta.json"
 CSV_DATA_FILE = Path(__file__).resolve().parents[2] / "sigungu_metal_imports.csv"
-# 이전 버전(JSON 캐시)과의 하위 호환을 위한 경로. 존재하면 1회 마이그레이션한다.
-LEGACY_JSON_CACHE_FILE = Path(__file__).resolve().parents[2] / "data_cache.json"
+# 구버전 JSON 캐시 경로(더 이상 사용하지 않음).
+LEGACY_JSON_CACHE_FILE = DATA_DIR / "data_cache.json"
 LAST_AUTO_UPDATE_FILE = Path(__file__).resolve().parents[2] / ".last_auto_update"
 # 캐시 스키마 버전. v2부터 "수입금액(USD)"가 천 달러가 아닌 실제 달러 금액이다.
 CACHE_SCHEMA_VERSION = 2
@@ -187,12 +191,13 @@ class DataCache:
 
             meta = self._read_meta()
             if CACHE_FILE.exists():
+                logger.info("[DataCache] parquet 캐시 로드: %s", CACHE_FILE)
                 df = pd.read_parquet(CACHE_FILE, engine="pyarrow")
                 last_updated = self._read_meta_timestamp() or datetime.fromtimestamp(
                     CACHE_FILE.stat().st_mtime
                 )
             elif LEGACY_JSON_CACHE_FILE.exists():
-                # 구버전 JSON 캐시가 남아있다면 1회 마이그레이션한다.
+                logger.warning("[DataCache] 구버전 JSON 캐시 사용: %s", LEGACY_JSON_CACHE_FILE)
                 with open(LEGACY_JSON_CACHE_FILE, "r", encoding="utf-8") as f:
                     payload = json.load(f)
                 df = pd.DataFrame(payload["rows"])
@@ -204,13 +209,14 @@ class DataCache:
                 if not df.empty:
                     self._save_cache(df, last_updated)
             elif CSV_DATA_FILE.exists():
-                # CSV 원본 데이터가 있다면 즉시 로드해서 Parquet 캐시로 저장한다.
+                logger.info("[DataCache] CSV 캐시 로드: %s", CSV_DATA_FILE)
                 df = pd.read_csv(CSV_DATA_FILE)
                 last_updated = datetime.fromtimestamp(CSV_DATA_FILE.stat().st_mtime)
                 meta = {"schema_version": CACHE_SCHEMA_VERSION}
                 if not df.empty:
                     self._save_cache(df, last_updated)
             else:
+                logger.info("[DataCache] 로컬 캐시 파일이 없어 API 수집을 시작합니다.")
                 return
 
             if df.empty:
