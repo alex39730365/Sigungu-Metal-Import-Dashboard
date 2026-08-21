@@ -171,60 +171,96 @@ class DataCache:
         self._lock = threading.Lock()
         self._load_cache()
 
-    def _load_cache(self) -> None:
-        """Supabase가 설정되어 있으면 DB에서, 그렇지 않으면 로컬 Parquet에서 캐시를 1회 로드한다.
+    def _load_local_cache(self) -> tuple[pd.DataFrame, Optional[datetime]]:
+        """로컬 Parquet/레거시 JSON/CSV 중 사용 가능한 캐시를 로드한다 (Supabase 미사용)."""
+        meta = self._read_meta()
+        if CACHE_FILE.exists():
+            logger.info("[DataCache] parquet 캐시 로드: %s", CACHE_FILE)
+            df = pd.read_parquet(CACHE_FILE, engine="pyarrow")
+            last_updated = self._read_meta_timestamp() or datetime.fromtimestamp(
+                CACHE_FILE.stat().st_mtime
+            )
+        elif LEGACY_JSON_CACHE_FILE.exists():
+            logger.warning("[DataCache] 구버전 JSON 캐시 사용: %s", LEGACY_JSON_CACHE_FILE)
+            with open(LEGACY_JSON_CACHE_FILE, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            df = pd.DataFrame(payload["rows"])
+            last_updated = (
+                datetime.fromisoformat(payload["last_updated"])
+                if payload.get("last_updated")
+                else datetime.fromtimestamp(LEGACY_JSON_CACHE_FILE.stat().st_mtime)
+            )
+            if not df.empty:
+                self._save_cache(df, last_updated)
+        elif CSV_DATA_FILE.exists():
+            logger.info("[DataCache] CSV 캐시 로드: %s", CSV_DATA_FILE)
+            df = pd.read_csv(CSV_DATA_FILE)
+            last_updated = datetime.fromtimestamp(CSV_DATA_FILE.stat().st_mtime)
+            meta = {"schema_version": CACHE_SCHEMA_VERSION}
+            if not df.empty:
+                self._save_cache(df, last_updated)
+        else:
+            logger.info("[DataCache] 로컬 캐시 파일이 없습니다.")
+            return pd.DataFrame(), None
 
-        이후 모든 API 엔드포인트는 디스크를 다시 읽지 않고 이 메모리
-        데이터프레임(self.df)에서만 조회한다.
+        if df.empty:
+            return df, last_updated
+
+        if meta.get("schema_version", 1) < 2 and "수입금액(USD)" in df.columns:
+            df["수입금액(USD)"] = df["수입금액(USD)"] * collector.USD_AMOUNT_UNIT
+            self._save_cache(df, last_updated)
+
+        return df, last_updated
+
+    def _load_cache(self) -> None:
+        """로컬 캐시(Parquet/CSV)와 Supabase 데이터를 모두 확인하여,
+        금속 카테고리 수가 더 많은(더 완전한) 데이터셋을 사용한다.
+
+        Supabase가 오래된/불완전한 데이터를 갖고 있어도 로컬 캐시가 최신이면
+        자동으로 로컬 캐시를 우선 사용하도록 하여, 캐시 파일만 갱신하면
+        서버가 항상 최신 데이터를 반영하게 한다.
         """
         try:
-            if supabase_client.is_configured():
-                df = supabase_client.load_raw_records()
-                last_updated = supabase_client.get_last_progress_updated()
-                if not df.empty:
-                    with self._lock:
-                        self.df = df
-                        self.last_updated = last_updated
-                        self.loaded_from_cache = True
-                        self.last_error = None
-                    return
+            local_df, local_updated = self._load_local_cache()
 
-            meta = self._read_meta()
-            if CACHE_FILE.exists():
-                logger.info("[DataCache] parquet 캐시 로드: %s", CACHE_FILE)
-                df = pd.read_parquet(CACHE_FILE, engine="pyarrow")
-                last_updated = self._read_meta_timestamp() or datetime.fromtimestamp(
-                    CACHE_FILE.stat().st_mtime
+            supabase_df = pd.DataFrame()
+            supabase_updated: Optional[datetime] = None
+            if supabase_client.is_configured():
+                try:
+                    supabase_df = supabase_client.load_raw_records()
+                    supabase_updated = supabase_client.get_last_progress_updated()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[DataCache] Supabase 로드 실패: %s", exc)
+
+            local_metal_count = (
+                local_df["금속구분"].nunique() if not local_df.empty and "금속구분" in local_df.columns else 0
+            )
+            supabase_metal_count = (
+                supabase_df["금속구분"].nunique()
+                if not supabase_df.empty and "금속구분" in supabase_df.columns
+                else 0
+            )
+
+            if supabase_metal_count >= local_metal_count and supabase_metal_count > 0:
+                logger.info(
+                    "[DataCache] Supabase 데이터 사용 (%s개 금속) >= 로컬 캐시 (%s개 금속)",
+                    supabase_metal_count,
+                    local_metal_count,
                 )
-            elif LEGACY_JSON_CACHE_FILE.exists():
-                logger.warning("[DataCache] 구버전 JSON 캐시 사용: %s", LEGACY_JSON_CACHE_FILE)
-                with open(LEGACY_JSON_CACHE_FILE, "r", encoding="utf-8") as f:
-                    payload = json.load(f)
-                df = pd.DataFrame(payload["rows"])
-                last_updated = (
-                    datetime.fromisoformat(payload["last_updated"])
-                    if payload.get("last_updated")
-                    else datetime.fromtimestamp(LEGACY_JSON_CACHE_FILE.stat().st_mtime)
+                df, last_updated = supabase_df, supabase_updated
+            elif local_metal_count > 0:
+                logger.info(
+                    "[DataCache] 로컬 캐시 사용 (%s개 금속) > Supabase (%s개 금속)",
+                    local_metal_count,
+                    supabase_metal_count,
                 )
-                if not df.empty:
-                    self._save_cache(df, last_updated)
-            elif CSV_DATA_FILE.exists():
-                logger.info("[DataCache] CSV 캐시 로드: %s", CSV_DATA_FILE)
-                df = pd.read_csv(CSV_DATA_FILE)
-                last_updated = datetime.fromtimestamp(CSV_DATA_FILE.stat().st_mtime)
-                meta = {"schema_version": CACHE_SCHEMA_VERSION}
-                if not df.empty:
-                    self._save_cache(df, last_updated)
+                df, last_updated = local_df, local_updated
             else:
-                logger.info("[DataCache] 로컬 캐시 파일이 없어 API 수집을 시작합니다.")
+                logger.info("[DataCache] 사용 가능한 캐시가 없어 API 수집을 시작합니다.")
                 return
 
             if df.empty:
                 return
-
-            if meta.get("schema_version", 1) < 2 and "수입금액(USD)" in df.columns:
-                df["수입금액(USD)"] = df["수입금액(USD)"] * collector.USD_AMOUNT_UNIT
-                self._save_cache(df, last_updated)
 
             with self._lock:
                 self.df = df
@@ -256,11 +292,9 @@ class DataCache:
     def _save_cache(self, df: pd.DataFrame, last_updated: datetime) -> None:
         """데이터프레임을 Parquet 파일 + 메타데이터(JSON)로 저장한다.
 
-        Supabase가 설정된 경우에는 DB가 영구 저장소이므로 로컬 Parquet 쓰기를 생략한다.
+        Supabase 설정 여부와 무관하게 로컬 Parquet도 항상 최신 상태로 유지한다.
+        (`_load_cache`가 로컬/Supabase 중 더 완전한 데이터를 자동 선택하기 때문.)
         """
-        if supabase_client.is_configured():
-            return
-
         df.to_parquet(CACHE_FILE, engine="pyarrow", index=False)
         with open(CACHE_META_FILE, "w", encoding="utf-8") as f:
             json.dump(
